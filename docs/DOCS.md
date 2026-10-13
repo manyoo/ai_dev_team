@@ -1,6 +1,6 @@
 # 项目文档协议
 
-> 每个项目都必须有一份持续更新的 md 记录（共 12 份）。这份文件定义**有哪些文件、谁维护、什么时候更新、怎么写**。
+> 每个项目都必须有一份持续更新的 md 记录（共 13 份）。这份文件定义**有哪些文件、谁维护、什么时候更新、怎么写**。
 > 机器可读的清单在 [`cordis.patch.yml`](../cordis.patch.yml) 的 `projectDocs`；骨架模板在 [`templates/project/`](../templates/project)。
 
 ## 1. 为什么强制
@@ -24,6 +24,7 @@
 | `docs/REVIEWS.md` | reviewer | 评审记录（文件:行 + 级别 + 建议 + 是否已修）**追加式** | 每次评审 |
 | `docs/SECURITY.md` | security | 威胁面 10 项核对、逐项结论与依据、高危项清零记录 | 涉及鉴权/支付/个人数据/对外接口时（高危未清零不得发布） |
 | `docs/RUNBOOK.md` | release | 发布顺序、迁移 expand/contract、开关、回滚、冒烟、告警、事故复盘 | 上线/迁移/事故后 |
+| `docs/AGENTIC.md` | agent-dev | 智能体拓扑与状态、记忆分层、工具契约、提示词与模型配置、护栏与预算、追踪与评测基线 | 改拓扑/状态/工具/提示词/模型时（改完必须跑评测回归） |
 | `docs/FRONTEND.md` | react-dev / miniprogram-dev | React SPA / 微信小程序工程结构、构建发布、对接方式 | 客户端工程变化时（无客户端可留空） |
 
 ## 3. 怎么生成
@@ -65,6 +66,7 @@ dev_team_start(goal="...", project="myapp")
 | 定了模块边界/NFR/关键选型 | `ARCHITECTURE.md` + `DECISIONS.md` |
 | 改了鉴权/支付/个人数据/对外接口 | `SECURITY.md` |
 | 要上线、要迁移、出了事故 | `RUNBOOK.md` |
+| 改了智能体拓扑/工具/提示词/模型 | `AGENTIC.md` +（评测结果进）`TESTING.md` |
 | 一轮工作收尾 | `WORKLOG.md` |
 | 客户端工程或对接方式变了 | `FRONTEND.md` |
 | 技术栈、命令、目录约定变了 | `AGENTS.md` |

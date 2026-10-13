@@ -2,7 +2,7 @@
 
 > 这份文件回答一个问题：**这支团队按什么规则开工、交接、验证、收尾。**
 > **详细设计在 [`OPERATING-MODEL.md`](OPERATING-MODEL.md)**：风险分级、三条车道（快/标准/高风险）+ 事故通道、
-> 12 个阶段的产物与完成判定、六道质量门、DoR/DoD、所有权矩阵、交接协议、证据等级、WIP 与度量。
+> 12 个主阶段 + 3 个智能体阶段（A1–A3）的产物与完成判定、六道质量门、DoR/DoD、所有权矩阵、交接协议、证据等级、WIP 与度量。
 > 机器可读的那份在 [`cordis.patch.yml`](../cordis.patch.yml) 的 `dev-team` 行（`roles` / `riskTiers` / `pipeline` / `projectDocs`）。
 > 三处要保持一致：改配置时同步改这两份文档，改文档时同步改配置。
 
@@ -25,6 +25,7 @@
 | `architect` 架构设计 | 否（T3） | 需求 + 现状架构 | 模块边界、依赖方向、NFR、选型与迁移兼容策略 | `docs/ARCHITECTURE.md`、`docs/DECISIONS.md` | → dev（实现基准）、reviewer（评审基准） |
 | `security` 安全合规 | 否（T3/点名） | 契约 + 实现 + 信任边界 | 威胁面逐项结论与依据、高危项清零 | `docs/SECURITY.md` | → lead（是否放行）、release（发布前提） |
 | `release` 发布运维 | 否（T3/点名） | 全部产出 + 安全结论 | 发布顺序、回滚、开关、冒烟、告警、事故复盘 | `docs/RUNBOOK.md`、CI/部署文件 | → lead（发布结论） |
+| `agent-dev` 智能体架构与开发 | 智能体项目 | 需求 + 系统边界 | 拓扑与状态、工具契约、提示词与模型配置、护栏与预算、评测集与基线 | `app/agents/`、`app/evals/`、`prompts/`、`docs/AGENTIC.md` | → qa（评测）、dev（接口）、security（工具权限）、release（上线） |
 | `react-dev` React 前端 | 否（点名） | 需要富交互或独立 SPA 的需求 | `frontend/` SPA、构建脚本、对接说明 | `frontend/`、`docs/FRONTEND.md` | → dev（契约缺口）、qa（验证步骤） |
 | `miniprogram-dev` 小程序 | 否（点名） | 要交付微信小程序的需求 | `miniprogram/` 工程、预览与真机步骤 | `miniprogram/`、`docs/FRONTEND.md` | → dev（契约缺口）、qa（验证步骤） |
 
@@ -59,6 +60,7 @@
 | architect | `dev-team-architect` | 模块边界与依赖方向、可验证 NFR、选型 ADR（含回滚）、expand/contract 迁移策略、契约复核 |
 | security | `dev-team-security` | 信任边界、10 项威胁面逐项核对、结论必须落到 文件:行、高危清零与「不得发布」判定 |
 | release | `dev-team-release` | 发布顺序与回滚触发阈值、迁移分批与不可回滚点、冒烟清单、可观测性与告警、事故复盘 |
+| agent-dev | `dev-team-agent-dev` | LangChain/LangGraph 选型与图、状态与记忆分层、工具契约、提示词与模型配置（DeepSeek v4.1 Flash）、护栏与成本预算、追踪与评测回归 |
 | react-dev | `dev-team-react` | 何时才用 React、Vite 工程结构、API 客户端封装、状态从简、与 HTMX 的边界、验证清单 |
 | miniprogram-dev | `dev-team-miniprogram` | 小程序工程结构、分包与体积、登录态与 401、支付/订阅消息、真机验证、密钥红线 |
 
@@ -138,6 +140,7 @@ Lead 建队前先定**风险等级**，等级决定成员、阶段任务与门�
 | T3（鉴权/支付/资金/个人数据/迁移/架构/发布） | `architect` / `reviewer` / `security` / `release` | T3 自动带上这四个：定边界与 NFR、独立评审、安全清零、发布与回滚 |
 | 只想要独立评审（T2 的关键改动） | `reviewer` | `roles: ["reviewer"]` 会把 `review` 阶段一并带进本轮 |
 | 要上线、要迁移、出过事故 | `release` | 上线前必须有回滚方案与冒烟清单，否则不许发布 |
+| 系统以智能体/多智能体为核心 | `agent-dev` | 默认形态；带进 A1–A3（设计→实现→评测）与评测门、成本门 |
 | 需要富客户端交互、复杂本地状态、图表联动、独立 SPA | `react-dev` | Lead 调 `dev_team_start` 时带 `roles: ["react-dev"]`（或直接对它 `spawn_teammate`） | 只在 `frontend/` 内建工程；不把 React 塞进 HTMX 页面 |
 | 要交付微信小程序 | `miniprogram-dev` | 同上，`roles: ["miniprogram-dev"]` | 复用同一套 API；凭据不进仓库 |
 | 两个客户端角色同时在场 | 两者 | 先建一个，稳定后再建第二个 | 它们共享 `docs/FRONTEND.md`，各自只追加自己的小节 |

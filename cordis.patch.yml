@@ -145,7 +145,7 @@
               operatingModel: /home/eric/programming/ai_dev_team/docs/OPERATING-MODEL.md
 
               # ── 技术栈 ────────────────────────────────────────────────────
-              stackSummary: Python 3.13 + FastAPI + asyncio + PostgreSQL + SQLAlchemy 2.x(async) + Alembic + Redis + HTMX；服务端 UI 用自研 pyjoist（import joist）做组件化。
+              stackSummary: Python 3.13 + FastAPI + asyncio + PostgreSQL + SQLAlchemy 2.x(async) + Alembic + Redis + HTMX；服务端 UI 用自研 pyjoist（import joist）做组件化；智能体与多智能体系统默认用 LangChain + LangGraph 实现，模型默认 DeepSeek v4.1 Flash（deepseek/deepseek-v4.1-flash），经环境变量配置。
               stackRules:
                 - 全链路 async：路由、依赖注入、数据库、Redis 全部 async；请求路径里禁止同步阻塞调用（requests、time.sleep、同步 SQLAlchemy Session、同步文件大 IO）
                 - 数据库：SQLAlchemy 2.x async engine + async_sessionmaker；事务边界放在 service 层，路由不写裸 SQL；查询必须显式限定字段与分页
@@ -159,6 +159,14 @@
                 - pyjoist 是本机包 /home/eric/programming/joist（PyPI 名 pyjoist，import 名 joist）。业务项目里不改它；要加能力就另开任务去改 joist 仓库
                 - 每个新组件/片段配渲染测试（断言关键结构与文案），HTMX 路由测 HX-Request 两条分支（片段 / 整页）
                 - 类型注解完整，ruff 与 pytest 必须过；不留调试代码、注释掉的旧实现与临时日志
+                - 智能体系统默认选型：LangChain（模型/工具抽象）+ LangGraph（图与状态机）；模型默认 DeepSeek v4.1 Flash，用环境变量配置（AGENT_MODEL / DEEPSEEK_API_KEY），不硬编码在代码里
+                - LangGraph 用法：StateGraph + 条件边表达控制流，持久化用 checkpointer，人工介入用 interrupt；不要用 while/递归硬拼控制流；每个图必须有最大步数与超时
+                - 工具契约：入参出参用 Pydantic 模型；工具必须幂等或显式标注非幂等；超时必设；错误作为数据返回（不要让异常中断整图）
+                - 提示词与模型参数外置并可版本化（prompts/ 目录 + 版本号）；改提示词视为契约变更，必须跑评测回归并更新 AGENTIC.md
+                - 成本与延迟有预算：单次调用 token/成本上限、图的最大步数；超预算要降级或拒绝，不许静默烧钱
+                - 评测回归是硬门：评测集与阈值进仓库，改动提示词/模型/工具后必须跑评测（uv run python -m app.evals.run），结果不劣于基线
+                - 单元测试不打真实模型：用假模型或录制回放；真实调用只放在冒烟与评测脚本里
+                - 智能体的 trace 里不记录敏感输入（PII 脱敏）；密钥只在环境变量
               commands:
                 - uv sync
                 - uv run pytest -q
@@ -166,6 +174,8 @@
                 - uv run ruff format --check .
                 - uv run alembic upgrade head
                 - uv run uvicorn app.main:app --reload
+                - uv run python -m app.agents.smoke            # 智能体冒烟（真实单轮调用，需 DEEPSEEK_API_KEY）
+                - uv run python -m app.evals.run --suite smoke  # 评测回归（低于阈值即失败）
                 - '# 非 uv 项目：把 uv run 换成对应虚拟环境的 python -m / pytest 调用'
 
               # ── 项目文档协议：每个项目都必须有，且持续更新 ──────────────
@@ -218,6 +228,10 @@
                   title: 运行手册
                   purpose: 部署与发布顺序、迁移 expand-contract、开关、回滚方案、冒烟清单、监控告警、事故复盘
                   owner: release
+                - path: docs/AGENTIC.md
+                  title: 智能体系统设计
+                  purpose: 智能体/多智能体的拓扑与状态、记忆分层、工具契约、提示词与模型配置（默认 DeepSeek v4.1 Flash）、护栏与预算、追踪与评测方案
+                  owner: agent-dev
 
               # ── 风险分级：Lead 建队前必须定级，等级决定成员与门禁 ────────────
               riskTiers:
@@ -311,6 +325,8 @@
                   title: 独立验证与报告
                   owner: qa
                   dependsOn: [unit, testplan]
+                  # 软依赖：agent-dev 在场、评测阶段进了本轮时才等它；否则不产生幻影阻塞
+                  dependsOnSoft: [agenteval]
                   tiers: [T1, T2, T3]
                   deliverables:
                     - tests/integration/ 集成与回归用例
@@ -356,6 +372,34 @@
                     - miniprogram/ 工程与分包策略
                     - FRONTEND.md 小程序小节与真机验证步骤
                     - 登录/支付链路按官方流程，凭据不进仓库
+                - id: agentdesign
+                  title: 智能体设计与契约
+                  owner: agent-dev
+                  dependsOn: [req]
+                  tiers: []
+                  deliverables:
+                    - 拓扑与状态设计（单体/多体、supervisor、状态字段、终止条件）
+                    - 工具契约（Pydantic 入参出参、超时、幂等、错误语义）
+                    - 提示词与模型配置方案（版本化、环境变量、默认 DeepSeek v4.1 Flash）
+                    - 护栏与预算（最大步数/token/成本、超时、降级）
+                - id: agentimpl
+                  title: 智能体实现（LangGraph）
+                  owner: agent-dev
+                  dependsOn: [agentdesign]
+                  tiers: []
+                  deliverables:
+                    - LangGraph StateGraph 实现（节点/条件边/子图/checkpointer/interrupt）
+                    - 工具实现与版本化提示词文件
+                    - 冒烟脚本 + 假模型可复现的单元测试
+                - id: agenteval
+                  title: 智能体评测与回归
+                  owner: qa
+                  dependsOn: [agentimpl]
+                  tiers: []
+                  deliverables:
+                    - 评测集（正常/边界/对抗输入）与阈值
+                    - 回归结果（通过率、成本、延迟）与失败样例分析
+                    - TESTING.md 的智能体评测小节
                 - id: accept
                   title: 验收与交付
                   owner: lead
@@ -372,6 +416,7 @@
                 - T2 标准车道：req → contract →（testplan ∥ schema → impl → unit）→ verify → accept；契约冻结后测试计划与实现并行
                 - T3 高风险车道：标准车道前加 design，后加 review → security → release；六道门全过才交付
                 - 事故通道：S1/S2 先止血（回滚或关开关）再复盘，补测试与告警后按 T3 回归
+                - 智能体工作流（点名 agent-dev 时并入 T1/T2/T3）：agentdesign → agentimpl → agenteval（qa 独立评测）；评测不达标不进验收
                 - 收尾：lead 亲自验收、更新 WORKLOG/DECISIONS，并记录一次通过率/返工次数/门禁失败点/阻塞时长
 
               # ── 团队硬约束（每个成员都会收到）──────────────────────────
@@ -393,6 +438,7 @@
                 - 影响线上的改动必须有回滚方案与开关；没有回滚方案不允许发布
                 - 目录/模块结构或依赖方向的调整属于架构变更 → 升级为 T3 并让 architect 出现（ARCHITECTURE.md 由 architect 维护）
                 - 同一时刻每个文件只有一个写入者；共享文件（pyproject.toml、uv.lock、migrations/versions/、CI 配置）改动前先报备 lead
+                - '智能体类项目建队要加 roles: ["agent-dev"]（会自动带进 agentdesign → agentimpl → agenteval）；改提示词/模型/工具等同于契约变更，必须跑评测并更新 AGENTIC.md'
               # ── 角色表 ──────────────────────────────────────────────────
               # name 同时是 teammate 名称与看板任务归属；create: false 表示出现这类需求时才点名创建
               roles:
@@ -616,3 +662,34 @@
                     - .github/workflows/
                     - Dockerfile
                     - deploy/
+                - name: agent-dev
+                  skill: dev-team-agent-dev
+                  title: 智能体架构与开发
+                  description: 负责智能体与多智能体系统的设计、架构与实现：LangChain/LangGraph 图与状态、工具契约、提示词与模型配置、记忆、护栏、追踪与评测
+                  phase: 智能体实现
+                  create: false
+                  duties:
+                    - 先定拓扑与契约：单体还是多体、谁是 supervisor、状态里放什么、终止条件是什么，写进 AGENTIC.md
+                    - 用 LangGraph 落地：StateGraph 的节点/条件边/子图、checkpointer 持久化、人工介入用 interrupt，不用 while/递归硬拼
+                    - 定义工具契约：Pydantic 入参出参、超时、幂等、错误当数据返回
+                    - 提示词与模型配置外置并版本化（prompts/ + 版本号）；模型与参数走环境变量，默认 DeepSeek v4.1 Flash
+                    - 记忆分层：线程内 state/checkpoint 与跨线程 store 分开，写清什么进记忆、何时淘汰
+                    - 护栏与预算：输入校验、工具白名单、最大步数/token/成本、超时与降级，全部有默认值
+                    - 可观测与评测：每次调用有 trace（节点耗时、token、成本）；与 qa 一起定评测集与阈值
+                    - 需要新依赖（langgraph/langchain）时先报备 lead，由 lead 指定谁改 pyproject.toml
+                  deliverables:
+                    - docs/AGENTIC.md：拓扑、状态、工具契约、提示词与模型配置、记忆、护栏、预算、评测方案
+                    - 可运行的智能体实现 + 冒烟脚本 + 假模型单测
+                    - 评测集与基线（通过率/成本/延迟），与 qa 共同确认阈值
+                  acceptance:
+                    - 冒烟与评测命令能跑通，回归结果不劣于基线
+                    - 有最大步数、超时与终止条件；工具错误不会中断整图
+                    - 模型与提示词可替换、版本可追溯（换模型/换提示词不改代码）
+                    - 预算有上限且有实际统计（token 与成本）
+                  docs:
+                    - docs/AGENTIC.md
+                  writeScopes:
+                    - app/agents/
+                    - app/evals/
+                    - prompts/
+                    - docs/AGENTIC.md

@@ -279,7 +279,7 @@ test("T2 标准车道：8 个阶段任务按依赖连成 DAG，3 个成员各拿
   assert.equal(result.riskTier.id, "T2");
   assert.deepEqual(result.riskTier.gates, ["契约门", "测试门", "验收门"]);
   assert.equal(result.project, project);
-  assert.equal(result.docs.created.length, 12, "建队时应自动补齐 12 份项目文档");
+  assert.equal(result.docs.created.length, 13, "建队时应自动补齐 13 份项目文档");
   assert.deepEqual(result.members.map((m) => m.target), ["pm", "dev", "qa"]);
   assert.equal(result.failures.length, 0);
 
@@ -426,23 +426,59 @@ test("风险等级与点名：T0 拒绝建队、未知等级报错、点名角�
   assert.ok(frontend.members.some((m) => m.target === "react-dev"));
 });
 
-test("dev_docs_init 真写盘：12 份文档、幂等且不覆盖、越界拒绝", () => {
+test("智能体工作流：点名 agent-dev 带进「设计→实现→评测」，评测归 qa 且独立验证等它", async () => {
+  const stub = teamStub();
+  const { start } = install(stub);
+  const result = await start.execute({ goal: "做一个工单分流智能体", risk: "T2", roles: ["agent-dev"] }, exec(lead));
+
+  const index = stageIndex(result);
+  for (const id of ["agentdesign", "agentimpl", "agenteval"]) assert.ok(index.has(id), `缺少阶段 ${id}`);
+  assert.equal(index.get("agentdesign").owner, "agent-dev");
+  assert.equal(index.get("agentimpl").owner, "agent-dev");
+  assert.equal(index.get("agenteval").owner, "qa", "评测必须归 qa，保持独立验证");
+  assert.deepEqual(blockersOf(index, "agentdesign"), ["req"]);
+  assert.deepEqual(blockersOf(index, "agentimpl"), ["agentdesign"]);
+  assert.deepEqual(blockersOf(index, "agenteval"), ["agentimpl"]);
+  assert.deepEqual(blockersOf(index, "verify"), ["agenteval", "testplan", "unit"], "软依赖应让独立验证等评测");
+  assert.deepEqual(result.members.map((m) => m.target), ["pm", "dev", "qa", "agent-dev"]);
+
+  const agentText = stub.calls.spawns.find((s) => s.name === "agent-dev").prompt[0].text;
+  for (const needle of [
+    "你是「AI 开发团队」的智能体架构与开发",
+    'skill(name="dev-team-agent-dev")',
+    "docs/AGENTIC.md",
+    "app/agents/",
+    "本轮风险等级：T2",
+  ]) {
+    assert.ok(agentText.includes(needle), `agent-dev 提示词缺少 ${needle}`);
+  }
+
+  // 非智能体运行不受影响：软依赖不产生幻影阻塞
+  const plain = teamStub();
+  const second = install(plain);
+  const plainResult = await second.start.execute({ goal: "普通功能改动", risk: "T2" }, exec(lead));
+  assert.deepEqual(blockersOf(stageIndex(plainResult), "verify"), ["testplan", "unit"]);
+  assert.equal(plainResult.stages.length, 8, "非智能体 T2 仍然是 8 个阶段");
+});
+
+test("dev_docs_init 真写盘：13 份文档、幂等且不覆盖、越界拒绝", () => {
   const { docs } = install(teamStub());
   const project = freshProject("scaffold");
   const first = docs.execute({ project }, exec(lead));
-  assert.equal(first.created.length, 12, `应创建 12 个文档，实际 ${first.created.length}`);
+  assert.equal(first.created.length, 13, `应创建 13 个文档，实际 ${first.created.length}`);
   assert.equal(first.existing.length, 0);
   assert.equal(first.missingTemplates.length, 0, "所有文档都应有内置模板");
   for (const path of first.created) assert.ok(existsSync(join(project, path)), `缺少 ${path}`);
   assert.ok(readFileSync(join(project, "docs/PROJECT.md"), "utf8").includes("非目标"));
   assert.ok(readFileSync(join(project, "docs/RUNBOOK.md"), "utf8").includes("回滚"));
+  assert.ok(readFileSync(join(project, "docs/AGENTIC.md"), "utf8").includes("LangGraph"));
   assert.ok(readFileSync(join(project, "docs/SECURITY.md"), "utf8").includes("高危项"));
   assert.ok(readFileSync(join(project, "AGENTS.md"), "utf8").includes("pyjoist"));
 
   writeFileSync(join(project, "docs/PROJECT.md"), "MARKER-人工内容\n", "utf8");
   const second = docs.execute({ project }, exec(lead));
   assert.equal(second.created.length, 0);
-  assert.equal(second.existing.length, 12);
+  assert.equal(second.existing.length, 13);
   assert.equal(readFileSync(join(project, "docs/PROJECT.md"), "utf8"), "MARKER-人工内容\n");
 
   const subset = docs.execute({ project, docs: ["docs/REVIEWS.md"] }, exec(lead));
