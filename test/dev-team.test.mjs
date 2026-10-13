@@ -9,8 +9,9 @@
  * 真实的 preset 激活与模型可见性只能在会话里验证，见 README「验证状态」。
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, globSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
@@ -524,6 +525,78 @@ test("重名成员跳过、单点失败隔离", async () => {
   assert.ok(partial.failures.some((f) => f.includes("qa") && f.includes("其任务已建")));
   assert.equal(partial.stages.length, 4, "成员失败不应回滚已建的阶段任务");
 });
+
+test("团队容量：超编在动手之前失败，并给出可操作选择", async () => {
+  const stub = teamStub();
+  const { start } = install(stub);
+  await assert.rejects(
+    () => start.execute({ goal: "T3 加两个客户端角色", risk: "T3", roles: ["react-dev", "miniprogram-dev"] }, exec(lead)),
+    (error) => {
+      assert.match(error.message, /超过团队上限 maxMembers=8/);
+      assert.match(error.message, /去掉点名\/连带角色/);
+      assert.match(error.message, /拆成两轮/);
+      assert.match(error.message, /两处必须一致/);
+      return true;
+    },
+  );
+  assert.equal(stub.calls.tasks.length, 0, "超编时不允许创建任何看板任务");
+  assert.equal(stub.calls.spawns.length, 0, "超编时不允许创建任何成员");
+
+  // 边界：正好等于上限可行（T3 的 7 人 + 1 个客户端角色 = 8）
+  const atLimit = teamStub();
+  const second = install(atLimit);
+  const result = await second.start.execute({ goal: "T3 加一个客户端角色", risk: "T3", roles: ["react-dev"] }, exec(lead));
+  assert.equal(result.members.length, 8);
+  assert.equal(result.failures.length, 0);
+});
+
+test("团队容量：静态超编的等级在激活时就报错", () => {
+  const base = realConfig();
+  // 6 人上限：T2（3 人）仍合法，T3（7 人）报错并点名该等级
+  assert.throws(
+    () => apply(harness(teamStub()).ctx, { ...base, maxMembers: 6 }),
+    /风险等级 T3 的静态名册 7 人超过 maxMembers=6/,
+  );
+  assert.throws(() => apply(harness(teamStub()).ctx, { ...base, maxMembers: 2 }), /静态名册 \d+ 人超过 maxMembers=2/);
+  assert.throws(() => apply(harness(teamStub()).ctx, { ...base, maxMembers: 0 }), /必须是 1–64 的整数/);
+  assert.throws(() => apply(harness(teamStub()).ctx, { ...base, maxMembers: "8" }), /必须是 1–64 的整数/);
+});
+
+/** Locate the installed agent-team bundle patch; null when this box has none. */
+function findTeamPatch() {
+  if (typeof globSync !== "function") return null;
+  const patterns = [
+    `${homedir()}/.dsh/profiles/*/node_modules/@deepseek-ai/dsh-experimental-agent-team-profile/cordis.patch.yml`,
+    `${homedir()}/.npm/_npx/*/node_modules/@deepseek-ai/dsh-experimental-agent-team-profile/cordis.patch.yml`,
+  ];
+  for (const pattern of patterns) {
+    try {
+      const hits = globSync(pattern);
+      if (hits.length > 0) return hits[0];
+    } catch {
+      // 忽略不可读的候选路径
+    }
+  }
+  return null;
+}
+
+const teamPatchPath = findTeamPatch();
+
+test(
+  "maxMembers 与 agent-team 组合包一致（防两边漂移）",
+  { skip: teamPatchPath === null ? "本机未找到 agent-team 组合包 patch" : false },
+  () => {
+    const patch = yaml.parse(readFileSync(teamPatchPath, "utf8"));
+    const inserted = patch.flatMap((entry) => (Array.isArray(entry.insert) ? entry.insert : []));
+    const row = inserted.find((item) => item.id === "agent-team");
+    assert.ok(row, "未在 patch 里找到 agent-team 行");
+    assert.equal(
+      realConfig().maxMembers,
+      row.config.maxMembers,
+      "本插件 maxMembers 必须与 agent-team 的 maxMembers 一致：改一处必须改另一处",
+    );
+  },
+);
 
 test("清理测试临时目录", () => {
   rmSync(TMP, { recursive: true, force: true });

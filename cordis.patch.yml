@@ -143,6 +143,9 @@
               templatesDir: templates/project
               # 完整运营模型（流水线/质量门/交接协议/证据等级/WIP/度量/事故通道）
               operatingModel: /home/eric/programming/ai_dev_team/docs/OPERATING-MODEL.md
+              # 团队人数上限。必须与 @deepseek-ai/dsh-experimental-agent-team-profile
+              # 里 agent-team 行的 maxMembers 一致（测试会比对，防两边漂移）。
+              maxMembers: 8
 
               # ── 技术栈 ────────────────────────────────────────────────────
               stackSummary: Python 3.13 + FastAPI + asyncio + PostgreSQL + SQLAlchemy 2.x(async) + Alembic + Redis + HTMX；服务端 UI 用自研 pyjoist（import joist）做组件化；智能体与多智能体系统默认用 LangChain + LangGraph 实现，模型默认 DeepSeek v4.1 Flash（deepseek/deepseek-v4.1-flash），经环境变量配置。

@@ -122,6 +122,7 @@ agentdesign(agent-dev) → agentimpl(agent-dev) → agenteval(qa) ⇢ verify(qa)
 | `pipeline[]` | 流水线阶段：`id` / `title` / `owner` / `dependsOn` / `tiers` / `deliverables` |
 | `projectDocs[]` | 每个项目必须有的 md：`path` / `title` / `purpose` / `owner`（13 份） |
 | `templatesDir` / `operatingModel` | 文档骨架目录、运营模型路径（写进蓝图） |
+| `maxMembers` | 团队人数上限（默认 8，必须与 agent-team 组合包一致；测试会比对防漂移） |
 | `workflow` / `rules` | 车道说明与团队硬约束（定级、契约变更、证据、WIP、回滚、单一写入者） |
 | `roles[]` | 角色契约：`name` / `title` / `description` / `phase` / `skill` / `duties` / `deliverables` / `acceptance` / `docs` / `writeScopes` / `create` |
 
@@ -143,7 +144,7 @@ agentdesign(agent-dev) → agentimpl(agent-dev) → agenteval(qa) ⇢ verify(qa)
 
 | 项 | 证据 |
 |---|---|
-| 插件行为 | `node --test test/` **12/12 通过**：蓝图内容、配置校验（含 tier/pipeline 全部错误分支与循环依赖）、**手册↔配置↔提示词一致性**、**13 份文档真写盘（幂等/不覆盖/越界拒绝）**、T1/T2/T3 三条车道的 DAG 与 blockedBy 精确断言、点名角色连带阶段与**软依赖（评测不产生幻影阻塞）**、T0 拒绝建队、权限与参数校验、重名跳过与单点失败隔离 |
+| 插件行为 | `node --test test/` **15/15 通过**：蓝图内容、配置校验（含 tier/pipeline 全部错误分支与循环依赖）、**手册↔配置↔提示词一致性**、**13 份文档真写盘（幂等/不覆盖/越界拒绝）**、T1/T2/T3 三条车道的 DAG 与 blockedBy 精确断言、点名角色连带阶段与**软依赖（评测不产生幻影阻塞）**、T0 拒绝建队、权限与参数校验、重名跳过与单点失败隔离 |
 | 模板完整性 | `templates/project/**` 与 `projectDocs` 一一对应（12/12），测试断言无 `missingTemplates` |
 | 手册完整性 | 11 份 `skills/dev-team-*/SKILL.md`：frontmatter 用真实 YAML 解析、目录名与 `name` 一致、`description`/`whenToUse` 非空、正文有实际内容 |
 | 安装与激活 | `install_bundle` → `application: applied`；`Config.listConfigs` 有 `include:preset-devteam`；`list_plugins` 显示 `enabled: true, fiberPhase: "active"`（preset registry 先审计子行导入/激活/泄漏，失败即抛错） |
@@ -152,10 +153,13 @@ agentdesign(agent-dev) → agentimpl(agent-dev) → agenteval(qa) ⇢ verify(qa)
 看板依赖与 ready 状态在界面上的呈现。验收：新开会话选 **开发团队** → 发需求并给项目根 → 预期看到一次
 `dev_team_start`、看板出现该等级的阶段任务链（含依赖）、成员名单与等级一致、项目里出现 13 份 md。
 
+容量相关的三条断言（超编前置失败且零副作用、正好等于上限可行、两侧 maxMembers 一致）都在 `test/dev-team.test.mjs` 里。
+
 ## 限制
 
 - teammate 与 Lead **同模型**；成员继承 Lead 的 preset，角色差异只来自任务与角色手册。
 - 共享工作目录，**无 worktree、无文件锁**：`writeScopes` 是约定，重叠只在看板警告，靠 Lead 裁决。
 - 文档脚手架只创建缺失文件，且只在工作目录或用户主目录内创建。
-- 团队上限 8 人（T3 用 7 人）；成员名永久保留，同一会话不能重建同名成员。
+- 团队上限 `maxMembers`（默认 8，T3 用 7 人）：**名册超编时建队会在动手前失败**（不建任务、不建成员），并给出三种选择——去掉点名角色、降级或拆两轮、或把两处 maxMembers 一起提高。静态超编的等级（等级名册本身就超上限）在激活时就报错。
+- 成员名永久保留，同一会话不能重建同名成员。
 - pyjoist 是本机包 `/home/eric/programming/joist`（`import joist`）；要改它请去那个仓库另开任务。
