@@ -1,0 +1,16 @@
+# 依赖与构建产物
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# 临时验证项目（本项目是团队模式仓库，业务项目各自独立成 git 仓库）
+tmp/
+projects/
+
+# 编辑器与系统
+.DS_Store
+*.swp
+.idea/
