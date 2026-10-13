@@ -1,0 +1,10 @@
+{
+  "name": "@local/dsh-preset-diag",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "排障插件：把 Agent 预设名册（含 broken 原因）导出到 report.json",
+  "main": "lib/index.js",
+  "exports": { ".": "./lib/index.js", "./cordis.patch.yml": "./cordis.patch.yml", "./package.json": "./package.json" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

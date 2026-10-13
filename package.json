@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "description": "DSH「AI 开发团队」模式：preset + 配置驱动的建队/文档脚手架工具（角色、技术栈、工作流、项目 md 文档协议都写在 YAML 配置里）",
-  "main": "lib/index.js",
+  "main": "lib/plugin.js",
   "exports": {
-    ".": "./lib/index.js",
+    ".": "./lib/plugin.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "dsh": {

@@ -15,7 +15,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { apply } from "../lib/index.js";
+import { apply } from "../lib/plugin.js";
 
 const require = createRequire(import.meta.url);
 const yaml = require("/home/eric/.dsh/profiles/web/node_modules/yaml");
@@ -597,6 +597,23 @@ test(
     );
   },
 );
+
+test("bundle 清单约定：exports 必须导出 cordis.patch.yml（否则设置页显示「加载失败」）", () => {
+  const manifest = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  assert.equal(manifest.dsh.bundle.patch, "./cordis.patch.yml");
+  assert.ok(existsSync(join(ROOT, "cordis.patch.yml")), "patch 文件必须存在");
+  assert.equal(
+    manifest.exports["./cordis.patch.yml"],
+    "./cordis.patch.yml",
+    "带 exports 字段的包必须显式导出 patch 子路径，否则按包名解析会 ERR_PACKAGE_PATH_NOT_EXPORTED",
+  );
+
+  // 本机装了 profile 链接时，做一次真实解析验证（找不到则跳过，不影响别的环境）
+  const profileDir = join(homedir(), ".dsh", "profiles", "web");
+  if (!existsSync(join(profileDir, "node_modules", "@local", "dsh-ai-dev-team"))) return;
+  const resolved = require.resolve("@local/dsh-ai-dev-team/cordis.patch.yml", { paths: [profileDir] });
+  assert.equal(resolved, join(ROOT, "cordis.patch.yml"), "通过包名解析 patch 必须落到本仓库文件");
+});
 
 test("清理测试临时目录", () => {
   rmSync(TMP, { recursive: true, force: true });

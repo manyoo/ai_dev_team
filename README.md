@@ -17,13 +17,14 @@
 ```
 .
 ├── cordis.patch.yml            # preset 声明 + 常规插件行 + dev-team 配置（角色/等级/流水线/栈/文档清单）
-├── lib/index.js                # host 半：配置校验、蓝图段落、dev_team_start（DAG 规划）、dev_docs_init
+├── lib/plugin.js               # host 半：配置校验、蓝图段落、dev_team_start（DAG 规划）、dev_docs_init
 ├── skills/dev-team-*/SKILL.md  # 角色手册 ×11（lead / pm / dev / qa / reviewer / architect / security / release / agent-dev / react / miniprogram）
 ├── templates/project/          # 项目 md 骨架 ×13（含 AGENTS.md）；dev_docs_init 复制到项目
 ├── docs/OPERATING-MODEL.md     # 运营模型（本次设计的核心）
 ├── docs/TEAM.md                # 角色、RACI、交接、质量门总览
 ├── docs/DOCS.md                # 项目文档协议
-└── test/dev-team.test.mjs      # 集成测试 ×11（含真写盘脚手架与 DAG 规划）
+├── tools/preset-diag/          # 排障：把预设名册（含 broken 原因）导出到 report.json
+└── test/dev-team.test.mjs      # 集成测试 ×16（含真写盘脚手架、DAG 规划与容量边界）
 ```
 
 ## 安装 / 更新
@@ -40,6 +41,26 @@ plugin_manager  action: install_bundle  target: /home/eric/programming/ai_dev_te
 - 对已安装 bundle 重复 `install_bundle` 返回 `ambiguous-install`（幂等提示，状态不变）；要带上改动必须走「移除-安装」。
 - 改 **skill 正文**不用重装（目录被监视）；改 **skill 名字、手册目录、根路径、preset 配置**要重装。
 - 已有会话保留启动时的 preset 版本；验证改动要开新会话。
+
+## 生效规则（很重要）
+
+| 改了什么 | 怎么生效 |
+|---|---|
+| `skills/**/SKILL.md` 正文 | 目录被监视，下一次会话/目录刷新即生效，不用重装 |
+| `templates/**` | 下一次 `dev_docs_init` / `dev_team_start` 生效，不用重装 |
+| `cordis.patch.yml`（团队配置） | `remove_bundle` → `install_bundle`；patch 本身是 live reload，但两步最稳 |
+| **`lib/*.js`（插件代码）** | **必须重启 dsh**：替换已安装的包无法换掉进程里已 import 的模块代际 |
+
+只重装、不重启会得到「新配置 + 旧代码」的组合，典型症状是**预设名册显示「加载失败」**（原因文案通常是
+「配置里有未知字段：…」），而此时 `list_plugins` / `list_bundles` 一切正常——那两者只反映行与状态，
+不反映模块代际。
+
+### 排障：模式显示「加载失败」
+
+1. `plugin_manager install_bundle target=/home/eric/programming/ai_dev_team/tools/preset-diag`
+2. 等约 10 秒，读 `tools/preset-diag/report.json`：每个预设的 `broken` 字段就是 UI 上显示的失败原因
+   （名册与组合清单两份）
+3. 用完 `plugin_manager remove_bundle target=@local/dsh-preset-diag`，并删掉 `report.json`
 
 ## 怎么用
 

@@ -1,0 +1,8 @@
+# 排障用：把 Agent 预设名册（含 broken 原因）导出到文件。
+# 用法：plugin_manager install_bundle target=<本目录绝对路径>
+#      等待 ~10 秒后读 tools/preset-diag/report.json；用完 remove_bundle 卸掉。
+- insert:
+    - id: preset-diag
+      name: '@local/dsh-preset-diag'
+      config:
+        out: /home/eric/programming/ai_dev_team/tools/preset-diag/report.json
