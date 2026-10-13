@@ -9,7 +9,7 @@
  * 真实的 preset 激活与模型可见性只能在会话里验证，见 README「验证状态」。
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -140,6 +140,69 @@ test("配置错误在激活时报出，而不是静默跑歪", () => {
     { ...base, roles: [{ ...base.roles[0], docs: ["docs/NOT-DECLARED.md"] }] },
     "未声明的文档",
   );
+  expectThrow({ ...base, roles: [{ ...base.roles[0], skill: "Bad Manual" }] }, "kebab-case");
+});
+
+test("角色手册（skill）：配置、磁盘文件与提示词三者一致", async () => {
+  const patch = yaml.parse(readFileSync(join(ROOT, "cordis.patch.yml"), "utf8"));
+  const plugins = patch[0].insert[0].config.plugins;
+  const config = plugins.find((plugin) => plugin.id === "dev-team").config;
+  const skillsDir = plugins.find((plugin) => plugin.id === "skill-filesystem").config.customSkillDirs[0];
+
+  // 1) skill 根目录就是本仓库的 skills/，且被运行时会用到
+  assert.equal(skillsDir, join(ROOT, "skills"));
+  assert.ok(existsSync(skillsDir), "skills 目录必须存在");
+
+  /** Parse a SKILL.md frontmatter block with the real YAML parser (catches quoting bugs). */
+  const frontmatter = (file) => {
+    const text = readFileSync(file, "utf8");
+    assert.ok(text.startsWith("---\n"), `${file} 应以 YAML frontmatter 开头`);
+    const end = text.indexOf("\n---", 4);
+    assert.ok(end > 0, `${file} 的 frontmatter 未闭合`);
+    const parsed = yaml.parse(text.slice(4, end)) ?? {};
+    return { ...parsed, body: text.slice(end + 4) };
+  };
+
+  // 2) 每个角色都有手册，且 frontmatter 合法、目录名与 name 一致
+  for (const role of config.roles) {
+    assert.ok(role.skill, `角色 ${role.name} 应配置 skill`);
+    const file = join(skillsDir, role.skill, "SKILL.md");
+    assert.ok(existsSync(file), `缺少 ${role.skill}/SKILL.md`);
+    const fm = frontmatter(file);
+    assert.equal(fm.name, role.skill, `${role.skill} 的 frontmatter name 必须与目录名一致`);
+    assert.ok(typeof fm.description === "string" && fm.description.length > 20, `${role.skill} 的 description 要能说明何时加载`);
+    assert.ok(typeof fm.whenToUse === "string" && fm.whenToUse.length > 0, `${role.skill} 应写 whenToUse`);
+    assert.ok(fm.body.trim().length > 500, `${role.skill} 正文要有实际内容`);
+  }
+
+  // 3) Lead 的编排手册：persona 点名 + 文件存在
+  const persona = plugins.find((plugin) => plugin.id === "persona").config.prefix;
+  assert.ok(persona.includes("dev-team-lead"), "persona 应要求 Lead 先加载编排手册");
+  assert.ok(existsSync(join(skillsDir, "dev-team-lead", "SKILL.md")), "缺少 dev-team-lead 手册");
+
+  // 4) 发现规则：skill 只能是 <name>/SKILL.md 一层，不能嵌套
+  for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    assert.ok(existsSync(join(skillsDir, entry.name, "SKILL.md")), `${entry.name} 缺 SKILL.md`);
+  }
+
+  // 5) 提示词与蓝图都要指向手册
+  const stub = teamStub();
+  const { start } = install(stub);
+  await start.execute({ goal: "手册接线验证", roles: config.roles.map((role) => role.name) }, exec(lead));
+  for (const role of config.roles) {
+    const spawn = stub.calls.spawns.find((item) => item.name === role.name);
+    assert.ok(spawn, `未创建 ${role.name}`);
+    assert.ok(
+      spawn.prompt[0].text.includes(`skill(name="${role.skill}")`),
+      `${role.name} 的提示词应要求先加载 ${role.skill}`,
+    );
+  }
+  const { sections } = install(teamStub());
+  for (const role of config.roles) {
+    assert.ok(sections[0].text.includes(`手册 ${role.skill}`), `蓝图应列出 ${role.name} 的手册名`);
+  }
+  assert.ok(sections[0].text.includes("每个成员开工前先用 skill 工具加载自己的角色手册"));
 });
 
 test("dev_docs_init 真写盘：建齐文档、内容来自模板、幂等且不覆盖", () => {

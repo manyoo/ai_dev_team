@@ -31,6 +31,7 @@
                 你是「AI 开发团队」模式下的技术负责人（Team Lead）。用户是产品负责人，通常不读代码；用中文沟通。
 
                 用户切换到本模式即表示同意使用 Agent Teams 团队（这是显式要求，无需再确认）。工作方式：
+                - 开工先加载编排手册：skill(name="dev-team-lead")——建队、切任务、质量门、验收、汇报的完整动作都在里面。
                 - 开发类请求按团队推进：todo_write 拆阶段 → dev_docs_init / dev_team_start 建队 → send_message 派活与中途 steer → 自己在最新工作区复核 diff 并重跑验收命令 → 汇总给用户。
                 - 契约优先：接口与数据模型没写进 docs/API.md、docs/DATA.md 之前，不让 dev 写业务实现。
                 - 文档优先：每个项目必须有本模式要求的 md 文件（蓝图里有清单），重要信息必须落文件；对话里的结论不算记录。你负责 docs/WORKLOG.md 与 docs/DECISIONS.md。
@@ -62,6 +63,10 @@
             name: '@deepseek-ai/dsh-tool-jobs'
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
+            config:
+              # 团队角色手册：每个角色一份 SKILL.md；目录被监视，改正文不需要重装
+              customSkillDirs:
+                - /home/eric/programming/ai_dev_team/skills
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
           - id: command-goal
@@ -217,6 +222,7 @@
 
               # ── 团队硬约束（每个成员都会收到）──────────────────────────
               rules:
+                - 开工前先加载自己的角色手册（skill 工具，名字见任务描述与蓝图）；手册讲方法，任务与配置讲契约，冲突时以契约与 docs/ 为准
                 - 重要信息必须落 md：需求→PROJECT.md，契约→API.md/DATA.md，决策→DECISIONS.md，验证→TESTING.md，评审→REVIEWS.md；对话里的结论不算记录
                 - 先契约后实现：API 与数据模型没写进 docs 之前不写业务实现
                 - 只写自己任务 writeScopes 内的路径；共享文件（pyproject.toml、uv.lock、alembic 版本目录、AGENTS.md、DECISIONS.md、WORKLOG.md）改动前先 send_message 给 lead
@@ -230,6 +236,7 @@
               # name 同时是 teammate 名称与看板任务归属；create: false 表示出现这类需求时才点名创建
               roles:
                 - name: pm
+                  skill: dev-team-pm
                   title: 产品经理
                   description: 把用户目标变成可验收的需求、非目标与边界清单，锁定范围
                   phase: 需求
@@ -252,6 +259,7 @@
                     - docs/PROJECT.md
                     - docs/DECISIONS.md
                 - name: dev
+                  skill: dev-team-dev
                   title: 后端/全栈开发
                   description: 用 FastAPI + asyncio + SQLAlchemy + Redis + HTMX(pyjoist) 实现需求，保持契约一致、可运行、可测试
                   phase: 实现
@@ -285,6 +293,7 @@
                     - docs/API.md
                     - docs/DATA.md
                 - name: qa
+                  skill: dev-team-qa
                   title: 测试/验证
                   description: 独立验证实现：复跑命令、补边界与回归用例，给出可复现的验证报告
                   phase: 验证
@@ -308,6 +317,7 @@
                     - tests/integration/
                     - docs/TESTING.md
                 - name: reviewer
+                  skill: dev-team-reviewer
                   title: 代码评审
                   description: 只读评审：按 文件:行 指出阻断问题与改进建议，不修改代码
                   phase: 评审
@@ -328,6 +338,7 @@
                   writeScopes:
                     - docs/REVIEWS.md
                 - name: react-dev
+                  skill: dev-team-react
                   title: React 前端开发
                   description: 按需加入：只在这类需求下建队——需要富客户端交互（实时编辑、复杂状态、图表联动、拖拽）或要交付独立 SPA
                   phase: 前端实现
@@ -350,6 +361,7 @@
                     - frontend/
                     - docs/FRONTEND.md
                 - name: miniprogram-dev
+                  skill: dev-team-miniprogram
                   title: 微信小程序开发
                   description: 按需加入：只在这类需求下建队——要交付微信小程序（WXML/WXSS/JS），复用后端 API
                   phase: 小程序实现

@@ -33,6 +33,29 @@
 | 放行/交付用户 | I | I | C | C | **A** |
 | 项目文档完整性 | R | R | R | R | **A** |
 
+### 1.1 角色手册（skill）
+
+**契约在配置，方法在手册。** `cordis.patch.yml` 里每个角色的 `duties` / `deliverables` / `acceptance` / `writeScopes`
+是**任务契约**（会进看板任务与成员提示词，必须短而准）；每个角色怎么做、代码模式、检查清单、常见坑写在
+`skills/<skill>/SKILL.md` 里，成员开工时用 `skill(name="...")` **按需加载**——不需要为每个成员付全量手册的 token。
+
+| 角色 | 手册 | 手册里有什么 |
+|---|---|---|
+| Lead | `dev-team-lead` | 何时组队、怎么切任务划范围、怎么盯与纠偏、什么时候自己下场、四道门、汇报格式、收尾清单 |
+| pm | `dev-team-pm` | 可判定需求写法、非目标、边界矩阵、验收标准、ADR 模板、与 dev 的交接 |
+| dev | `dev-team-dev` | 分层写法、async 底线、SQLAlchemy 事务/分页、Alembic 三步加列、Redis 约定、pyjoist 组件与 builder 完整示例、HTMX、测试配方、交付自检 |
+| qa | `dev-team-qa` | 复跑纪律、用例矩阵、用例示例、最小复现报告、TESTING.md 结构、升级判定 |
+| reviewer | `dev-team-reviewer` | 九步评审顺序、阻断/建议分级、REVIEWS.md 格式、高频阻断清单、只读纪律 |
+| react-dev | `dev-team-react` | 何时才用 React、Vite 工程结构、API 客户端封装、状态从简、与 HTMX 的边界、验证清单 |
+| miniprogram-dev | `dev-team-miniprogram` | 小程序工程结构、分包与体积、登录态与 401、支付/订阅消息、真机验证、密钥红线 |
+
+- 手册根目录：`cordis.patch.yml` 的 `skill-filesystem` 行 `customSkillDirs` → 本仓库 `skills/`；项目自己的
+  `<项目根>/.dsh/skills` 仍然有效，项目专属 skill 照常放。
+- **改手册正文不用重装**（目录被监视，下一次会话/目录刷新生效）；改 **skill 名字、手册目录或根路径**要重装 bundle。
+- 新增角色 = `roles` 加一条（含 `skill`）+ 建 `skills/<skill>/SKILL.md`；`node --test test/` 会校验
+  「配置里的 skill」与「磁盘上的 SKILL.md」一一对应、frontmatter 合法、提示词里带加载指令。
+- 手册与配置/任务冲突时，**以任务描述与 `docs/` 契约**为准（手册每份开头都写了这一条）。
+
 ## 2. 工作流：八个阶段与交接物
 
 每个阶段的「完成」都由文件或命令证明，不靠口头。

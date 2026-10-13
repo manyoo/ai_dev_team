@@ -16,10 +16,11 @@
 .
 ├── cordis.patch.yml        # preset 声明 + 常规插件行 + dev-team 配置（角色/栈/工作流/文档清单）
 ├── lib/index.js            # host 半：配置校验、蓝图段落、dev_team_start、dev_docs_init
+├── skills/dev-team-*/SKILL.md  # 角色手册（7 份：lead / pm / dev / qa / reviewer / react / miniprogram）
 ├── templates/project/      # 每个新项目的 md 文档骨架（10 个文件，含 AGENTS.md）
 ├── docs/TEAM.md            # 团队协作设计：角色、交接、质量门、任务板、沟通协议、扩编
 ├── docs/DOCS.md            # 项目文档协议：文件清单、所有者、更新时机、写作规则
-├── test/dev-team.test.mjs  # 集成测试（含真写盘的脚手架测试）
+├── test/dev-team.test.mjs  # 集成测试（含真写盘的脚手架与手册一致性测试）
 └── README.md
 ```
 
@@ -53,17 +54,35 @@ plugin_manager  action: install_bundle  target: /home/eric/programming/ai_dev_te
 
 ## 团队一览
 
-| 角色 | 默认建 | 写入范围 |
-|---|---|---|
-| `pm` 产品经理 | ✅ | `docs/PROJECT.md`、`docs/DECISIONS.md` |
-| `dev` 后端/全栈 | ✅ | `app/`、`templates/`、`migrations/`、`tests/unit/`、`pyproject.toml`、`docs/{ARCHITECTURE,API,DATA}.md` |
-| `qa` 测试/验证 | ✅ | `tests/integration/`、`docs/TESTING.md` |
-| `reviewer` 代码评审 | 点名 | `docs/REVIEWS.md` |
-| `react-dev` React 前端 | 点名 | `frontend/`、`docs/FRONTEND.md` |
-| `miniprogram-dev` 微信小程序 | 点名 | `miniprogram/`、`docs/FRONTEND.md` |
+| 角色 | 默认建 | 角色手册（skill） | 写入范围 |
+|---|---|---|---|
+| `pm` 产品经理 | ✅ | `dev-team-pm` | `docs/PROJECT.md`、`docs/DECISIONS.md` |
+| `dev` 后端/全栈 | ✅ | `dev-team-dev` | `app/`、`templates/`、`migrations/`、`tests/unit/`、`pyproject.toml`、`docs/{ARCHITECTURE,API,DATA}.md` |
+| `qa` 测试/验证 | ✅ | `dev-team-qa` | `tests/integration/`、`docs/TESTING.md` |
+| `reviewer` 代码评审 | 点名 | `dev-team-reviewer` | `docs/REVIEWS.md` |
+| `react-dev` React 前端 | 点名 | `dev-team-react` | `frontend/`、`docs/FRONTEND.md` |
+| `miniprogram-dev` 微信小程序 | 点名 | `dev-team-miniprogram` | `miniprogram/`、`docs/FRONTEND.md` |
+| Lead（编排） | 会话本身 | `dev-team-lead` | 汇总：`docs/WORKLOG.md`、`docs/DECISIONS.md` |
 
 按需扩编：`dev_team_start(goal=..., project=..., roles=["dev", "react-dev"])`。要加全新角色，就在 `cordis.patch.yml`
-的 `roles` 里加一条（`duties` / `deliverables` / `acceptance` / `docs` / `writeScopes`），再走「移除-安装」。
+的 `roles` 里加一条（`skill` / `duties` / `deliverables` / `acceptance` / `docs` / `writeScopes`），再加一份
+`skills/<skill>/SKILL.md`，然后走「移除-安装」。
+
+## 角色手册（skill）
+
+**配置放契约，手册放方法**：`cordis.patch.yml` 里每个角色的 `duties/deliverables/acceptance/writeScopes` 是任务契约
+（进入看板任务与成员提示词，必须短）；**做法、代码模式、检查清单、常见坑**写在 [`skills/dev-team-*/SKILL.md`](skills) 里，
+成员开工时用 `skill(name="dev-team-dev")` 按需加载——不为每个成员付全量手册的 token。
+
+- 手册根目录由 preset 的 `skill-filesystem` 行配置：`customSkillDirs: [/home/eric/programming/ai_dev_team/skills]`；
+  项目自己的 `<项目根>/.dsh/skills` 仍然有效（默认根保留），项目专属 skill 可以照常放。
+- **改手册正文不用重装**：`dsh-skill-filesystem` 会监视根目录，下一次会话/目录刷新即生效。
+- **改 skill 名字、加新手册目录、改根路径要重装**（配置在 preset 里）。
+- 每个成员的任务提示词都会带一行 `开工前先加载你的角色手册：skill(name="...")`；蓝图里也列出各角色的手册名。
+- 手册与配置冲突时以**任务描述与 `docs/` 契约**为准（手册里也这么写着）。
+
+新增一份手册的最小步骤：建 `skills/dev-team-<role>/SKILL.md`（frontmatter 必须有 `name` 与 `description`，
+建议写 `whenToUse`），在 `roles` 里加 `skill: dev-team-<role>`，`node --test test/` 会校验两者一致。
 
 ## 配置即数据
 
@@ -79,7 +98,9 @@ plugin_manager  action: install_bundle  target: /home/eric/programming/ai_dev_te
 | `templatesDir` | 文档骨架目录，默认 `templates/project` |
 | `workflow` | 八阶段工作流（立项 → 契约 → 拆分 → 实现 → 验证 → 评审 → 验收 → 收尾） |
 | `rules` | 团队硬约束（文档必落盘、先契约后实现、写入范围、交付带验证……） |
-| `roles[]` | 角色表：`name` / `title` / `description` / `phase` / `duties` / `deliverables` / `acceptance` / `docs` / `writeScopes` / `create` |
+| `roles[]` | 角色表：`name` / `title` / `description` / `phase` / **`skill`** / `duties` / `deliverables` / `acceptance` / `docs` / `writeScopes` / `create` |
+
+另外 `skill-filesystem` 插件行的 `config.customSkillDirs` 决定角色手册从哪个目录发现。
 
 配置错误在激活时报出（未知字段、非 kebab-case 角色名、角色名重复、`docs` 引用了未声明的文档、`projectDocs`
 路径重复或写成绝对路径），不会静默跑歪。
@@ -100,8 +121,9 @@ plugin_manager  action: install_bundle  target: /home/eric/programming/ai_dev_te
 
 | 项 | 证据 |
 |---|---|
-| 插件代码行为 | `node --test test/` 8 个用例全过：配置校验、蓝图渲染、**真写盘脚手架（10 个文件、幂等、不覆盖）**、路径越界拒绝、`project` 前缀范围、角色提示词内容、Lead 权限、重名与单点失败 |
+| 插件代码行为 | `node --test test/` 9 个用例全过：配置校验（含非法 `skill` 名）、蓝图渲染、**手册一致性（配置↔磁盘↔提示词）**、**真写盘脚手架（10 个文件、幂等、不覆盖）**、路径越界拒绝、`project` 前缀范围、角色提示词内容、Lead 权限、重名与单点失败 |
 | 模板完整性 | `templates/project/**` 与 `projectDocs` 一一对应（10/10），测试断言无 `missingTemplates` |
+| 手册完整性 | 7 份 `skills/dev-team-*/SKILL.md`：frontmatter 的 `name` 与目录名一致、`description`/`whenToUse` 非空、正文有实际内容，且每个角色的提示词都带 `skill(name="...")` |
 | 安装与激活 | `install_bundle` → `application: applied`；`Config.listConfigs` 有 `include:preset-devteam`；`list_plugins` 显示 `enabled: true, fiberPhase: "active"`（preset registry 会先审计子行的导入/激活/泄漏，失败即抛错） |
 
 未验证（需要真实会话，本会话无法代做）：用 `devteam` 预设新开会话后模型侧的蓝图与工具可见性、真跑一次建队。

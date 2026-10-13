@@ -1,0 +1,120 @@
+---
+name: dev-team-qa
+description: 测试/验证手册：独立复跑命令、按矩阵补边界与回归用例、写可复现的验证报告与最小复现步骤，把结论落进 docs/TESTING.md。做验证类任务、要判定「到底修好没有」时加载。
+whenToUse: 收到以 `qa` 身份的验证任务时；需要独立复现缺陷或给出可核查验证结论时。
+---
+
+# 测试/验证手册（dev-team-qa）
+
+> **你不写业务代码，也不改 dev 的文件。** 你写用例（`tests/integration/`）与报告（`docs/TESTING.md`）。
+> 你的结论必须能被别人用同样命令复现——**没有命令与输出的结论等于没做**。
+
+## 0. 开工顺序
+
+1. `team_task_get` 读任务 → `claim` 认领。
+2. 读契约：`docs/API.md`、`docs/DATA.md`、`docs/PROJECT.md` 的验收标准（验收标准就是你的测试清单）。
+3. 先在**当前工作区**跑一遍 dev 声称跑过的命令，记录真实输出（不要相信任务描述里的「已通过」）。
+4. 补用例 → 跑 → 写 `docs/TESTING.md` → `complete` → 汇报。
+
+## 1. 独立验证的第一动作：复跑
+
+```bash
+uv run pytest -q
+uv run ruff check .
+uv run alembic upgrade head          # 空库也要能过
+```
+
+把**真实输出**记下来（通过数/失败数/报错摘要）。与 dev 声称的不一致就是缺陷，第一时间 `send_message` 给 lead。
+
+## 2. 用例设计矩阵（逐格补，空格就是漏测）
+
+| 维度 | 必测 |
+|---|---|
+| 成功路径 | 正常输入的最短路径 |
+| 参数非法 | 缺字段、类型错、超长、越界值、特殊字符 |
+| 空态 | 空列表、null、0 与空字符串的区分 |
+| 权限 | 未登录、他人资源、角色不足（403/404 不能混用） |
+| 并发 | 同键并发写、重复提交、两次请求同一幂等键 |
+| 依赖故障 | PG 断连/慢、Redis 不可用：是否降级、错误码是否合理 |
+| 数据规模 | 分页边界（第一页/最后一页/超出范围）、1 万行时的查询 |
+| 迁移 | 空库 `upgrade head`；`downgrade`（如声明可回滚） |
+| HTMX | 带 `HX-Request` 返回片段、不带返回整页；错误时返回可渲染片段 |
+| 渲染 | 组件关键结构与文案；状态映射（如 pending→待付） |
+
+## 3. 写用例（示例）
+
+```python
+# tests/integration/test_orders.py
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+@pytest.fixture
+async def client(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
+
+async def test_empty_state_shows_placeholder(client):
+    r = await client.get("/orders", headers={"HX-Request": "true"})
+    assert r.status_code == 200
+    assert "暂无订单" in r.text
+
+async def test_page_out_of_range(client):
+    r = await client.get("/orders?page=999", headers={"HX-Request": "true"})
+    assert r.status_code in (200, 404)
+    assert "暂无订单" in r.text or "没有更多" in r.text
+
+async def test_duplicate_submit_is_idempotent(client):
+    payload = {"sku": "A1", "idem_key": "k-1"}
+    first = await client.post("/orders", data=payload, headers={"HX-Request": "true"})
+    second = await client.post("/orders", data=payload, headers={"HX-Request": "true"})
+    assert first.status_code == second.status_code == 200
+    assert "订单号" in first.text and first.text == second.text   # 或断言只落一条
+```
+
+- 每个用例独立（事务回滚 fixture），不依赖执行顺序与共享状态。
+- 断言「行为」，不断言实现细节（不要断言 SQL 文本、不要断言日志）。
+- 失败用例要能定位：断言消息里写清期望与实际。
+
+## 4. 缺陷报告（最小复现）
+
+```
+[缺陷] <一句话现象>
+环境：<提交/分支、依赖版本、数据库状态>
+复现：
+  1. <命令或点击路径>
+  2. ...
+实际：<贴输出/截图描述>
+期望：<按 docs/PROJECT.md 哪条验收标准>
+影响：<阻断/高/中/低 + 影响范围>
+已尝试：<a/b 无效>
+```
+
+不复现就不是缺陷，是猜测——继续找最小复现。
+
+## 5. `docs/TESTING.md` 要写什么
+
+- 测试策略表（层级、位置、命令）
+- 用例清单（场景 / 类型 / 期望 / 状态）
+- **最近一次独立验证**：日期、提交、命令与结果、手工路径、结论
+- 已知缺口：没覆盖的、暂时不测的、需要真机/浏览器的
+- **你的结论与 dev 的自测结论分开记录**（两栏或明确标注来源）
+
+## 6. 判定与升级
+
+| 情况 | 处理 |
+|---|---|
+| 全部通过且覆盖矩阵 | `complete`，报告写「通过 + 覆盖了什么 + 没覆盖什么」 |
+| 有失败 | 不 `complete`；把最小复现 `send_message` 给 lead，等 dev 修完再复跑 |
+| 无法验证（缺环境/缺数据） | 明确写「未验证 + 原因 + 需要的条件」，不要含糊通过 |
+| 契约本身有矛盾 | 报给 lead（这可能改的是需求，不是代码） |
+
+## 7. 自检（`complete` 之前）
+
+- [ ] 复跑命令并记录了真实输出，而不是转述
+- [ ] 矩阵里每格都有结论（通过 / 失败 / 明确不适用 + 理由）
+- [ ] HTMX 请求与直接访问两条分支都测了
+- [ ] 权限与并发至少各有一例
+- [ ] 失败项有最小复现步骤，不是「偶发」
+- [ ] `docs/TESTING.md` 已更新，含命令与结果摘要
+
+汇报模板：`[交付] 任务 <id>：独立验证=<命令> → <结果>；覆盖=<矩阵要点>；缺陷=<N 项，含最小复现>；未覆盖=<...>`
