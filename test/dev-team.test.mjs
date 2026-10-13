@@ -1,7 +1,7 @@
 /**
- * AI 开发团队模式插件的本地集成测试。
+ * AI 开发团队模式插件的本地集成测试（v3：风险分级 + 流水线 DAG）。
  *
- * 用假 ctx / 假 Agent Teams 服务真实跑 apply、dev_docs_init（真写盘）与 dev_team_start 的执行路径。
+ * 用假 ctx / 假 Agent Teams 服务真实跑 apply、dev_docs_init（真写盘）与 dev_team_start 的规划路径。
  * 运行（在仓库根目录）：
  *
  *   node --test test/
@@ -21,10 +21,15 @@ const yaml = require("/home/eric/.dsh/profiles/web/node_modules/yaml");
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const TMP = join(ROOT, "tmp");
 
-/** Load the real `dev-team` row config from the shipped patch. */
-function realConfig() {
+/** Parsed preset declaration from the shipped patch. */
+function realPatch() {
   const patch = yaml.parse(readFileSync(join(ROOT, "cordis.patch.yml"), "utf8"));
-  return patch[0].insert[0].config.plugins.find((plugin) => plugin.id === "dev-team").config;
+  return patch[0].insert[0].config;
+}
+
+/** The `dev-team` row config. */
+function realConfig() {
+  return realPatch().plugins.find((plugin) => plugin.id === "dev-team").config;
 }
 
 /** Fresh project directory for scaffolding tests. */
@@ -76,8 +81,15 @@ function teamStub(options = {}) {
     tryMembership: (agent) => (agent.role === "teammate" ? { role: "teammate" } : { role: "lead" }),
     listMembers: () => calls.members,
     async createTask(_caller, request) {
-      const task = { id: `t${next++}`, revision: 1, subject: request.subject, description: request.description, writeScopes: request.writeScopes ?? [] };
-      calls.tasks.push(request);
+      const task = {
+        id: `t${next++}`,
+        revision: 1,
+        subject: request.subject,
+        description: request.description,
+        writeScopes: request.writeScopes ?? [],
+        blockedBy: request.blockedBy ?? [],
+      };
+      calls.tasks.push(task);
       return task;
     },
     async spawnTeammate(_caller, request) {
@@ -91,7 +103,24 @@ function teamStub(options = {}) {
 const lead = { id: "s-lead", role: "lead" };
 const exec = (agent) => ({ agent, signal: new AbortController().signal });
 
-test("真实 patch 配置能渲染出蓝图：角色、技术栈、命令、工作流、文档协议", () => {
+/** stageId → { taskId, blockedByTaskIds, subject, owner } */
+function stageIndex(result) {
+  const index = new Map();
+  for (const item of result.stages) {
+    index.set(item.stage, { taskId: item.taskId, blockedBy: item.blockedBy ?? [], subject: item.title, owner: item.owner });
+  }
+  return index;
+}
+
+/** Compare a stage's blockers by stage name, independent of task numbering. */
+function blockersOf(index, stageId) {
+  const byTask = new Map([...index.values()].map((item) => [item.taskId, item]));
+  return (index.get(stageId)?.blockedBy ?? [])
+    .map((taskId) => [...index.entries()].find(([, item]) => item.taskId === taskId)?.[0] ?? taskId)
+    .sort();
+}
+
+test("蓝图：角色、手册、风险等级、流水线、文档协议、命令、运营模型路径齐全", () => {
   const { sections, start, docs } = install(teamStub());
   assert.equal(sections.length, 1);
   assert.equal(sections[0].name, "dev-team:blueprint");
@@ -102,22 +131,28 @@ test("真实 patch 配置能渲染出蓝图：角色、技术栈、命令、工�
     "dev（后端/全栈开发）",
     "qa（测试/验证）",
     "reviewer（代码评审）",
+    "architect（架构与技术设计）",
+    "security（安全与合规）",
+    "release（发布与可观测性）",
     "react-dev（React 前端开发）",
     "miniprogram-dev（微信小程序开发）",
+    "T2（默认）",
+    "T3 高风险",
+    "req 需求与验收标准（pm）",
+    "verify 独立验证与报告（qa）",
     "pyjoist",
-    "import joist",
     "uv run pytest -q",
-    "docs/API.md",
-    "docs/TESTING.md",
+    "docs/SECURITY.md",
+    "docs/RUNBOOK.md",
     "项目文档协议",
-    "dev_team_start",
+    "OPERATING-MODEL.md",
   ]) {
     assert.ok(text.includes(needle), `蓝图缺少 ${needle}`);
   }
   assert.equal(start.name, "dev_team_start");
   assert.equal(docs.name, "dev_docs_init");
   assert.deepEqual(start.parameters.required, ["goal"]);
-  assert.deepEqual(Object.keys(start.parameters.properties), ["goal", "project", "roles"]);
+  assert.deepEqual(Object.keys(start.parameters.properties), ["goal", "project", "risk", "roles"]);
 });
 
 test("配置错误在激活时报出，而不是静默跑歪", () => {
@@ -131,25 +166,63 @@ test("配置错误在激活时报出，而不是静默跑歪", () => {
   expectThrow({ ...base, roles: [...base.roles, { ...base.roles[0] }] }, "角色名重复");
   expectThrow({ ...base, roles: [{ name: "Dev Lead", title: "x", description: "y" }] }, "kebab-case");
   expectThrow({ ...base, roles: [{ name: "dev" }] }, "缺少 title");
+  expectThrow({ ...base, roles: [{ ...base.roles[0], skill: "Bad Manual" }] }, "kebab-case");
   expectThrow({ ...base, projectDocs: [...base.projectDocs, { ...base.projectDocs[0] }] }, "路径重复");
   expectThrow(
     { ...base, projectDocs: [...base.projectDocs, { path: "/etc/passwd", title: "x", purpose: "y" }] },
     "相对路径",
   );
+  expectThrow({ ...base, roles: [{ ...base.roles[0], docs: ["docs/NOT-DECLARED.md"] }] }, "未声明的文档");
+  // 风险等级
+  expectThrow({ ...base, riskTiers: [...base.riskTiers, { ...base.riskTiers[1] }] }, "风险等级 id 重复");
   expectThrow(
-    { ...base, roles: [{ ...base.roles[0], docs: ["docs/NOT-DECLARED.md"] }] },
-    "未声明的文档",
+    { ...base, riskTiers: base.riskTiers.map((tier) => (tier.id === "T1" ? { ...tier, roles: ["ghost"] } : tier)) },
+    "未定义的角色：ghost",
   );
-  expectThrow({ ...base, roles: [{ ...base.roles[0], skill: "Bad Manual" }] }, "kebab-case");
+  expectThrow(
+    { ...base, riskTiers: base.riskTiers.map((tier) => (tier.default ? { ...tier, default: undefined } : { ...tier, default: true })) },
+    "只能有一个 default",
+  );
+  expectThrow(
+    { ...base, riskTiers: base.riskTiers.map((tier) => (tier.id === "T1" ? { ...tier, roles: [], solo: false } : tier)) },
+    "必须声明 roles",
+  );
+  // 流水线
+  expectThrow({ ...base, pipeline: [...base.pipeline, { ...base.pipeline[0] }] }, "阶段 id 重复");
+  expectThrow(
+    { ...base, pipeline: base.pipeline.map((s) => (s.id === "impl" ? { ...s, owner: "ghost" } : s)) },
+    "不是已定义的角色",
+  );
+  expectThrow(
+    { ...base, pipeline: base.pipeline.map((s) => (s.id === "impl" ? { ...s, dependsOn: ["ghost"] } : s)) },
+    "依赖了不存在的阶段",
+  );
+  expectThrow(
+    { ...base, pipeline: base.pipeline.map((s) => (s.id === "impl" ? { ...s, tiers: ["T9"] } : s)) },
+    "未定义的风险等级：T9",
+  );
+  expectThrow(
+    {
+      ...base,
+      pipeline: base.pipeline.map((s) => (s.id === "impl" ? { ...s, dependsOn: ["unit"] } : s)),
+    },
+    "循环依赖",
+  );
+  // 一个等级若选不到任何阶段（例如它只列了没有阶段的角色）必须报错
+  const dev = base.roles.find((role) => role.name === "dev");
+  expectThrow(
+    {
+      ...base,
+      roles: [...base.roles, { ...dev, name: "ops", title: "运维" }],
+      riskTiers: [...base.riskTiers, { id: "T9", title: "空车道", when: "x", roles: ["ops"], gates: [] }],
+    },
+    "选不到任何阶段",
+  );
 });
 
 test("角色手册（skill）：配置、磁盘文件与提示词三者一致", async () => {
-  const patch = yaml.parse(readFileSync(join(ROOT, "cordis.patch.yml"), "utf8"));
-  const plugins = patch[0].insert[0].config.plugins;
-  const config = plugins.find((plugin) => plugin.id === "dev-team").config;
-  const skillsDir = plugins.find((plugin) => plugin.id === "skill-filesystem").config.customSkillDirs[0];
-
-  // 1) skill 根目录就是本仓库的 skills/，且被运行时会用到
+  const config = realConfig();
+  const skillsDir = realPatch().plugins.find((plugin) => plugin.id === "skill-filesystem").config.customSkillDirs[0];
   assert.equal(skillsDir, join(ROOT, "skills"));
   assert.ok(existsSync(skillsDir), "skills 目录必须存在");
 
@@ -163,7 +236,6 @@ test("角色手册（skill）：配置、磁盘文件与提示词三者一致", 
     return { ...parsed, body: text.slice(end + 4) };
   };
 
-  // 2) 每个角色都有手册，且 frontmatter 合法、目录名与 name 一致
   for (const role of config.roles) {
     assert.ok(role.skill, `角色 ${role.name} 应配置 skill`);
     const file = join(skillsDir, role.skill, "SKILL.md");
@@ -175,60 +247,204 @@ test("角色手册（skill）：配置、磁盘文件与提示词三者一致", 
     assert.ok(fm.body.trim().length > 500, `${role.skill} 正文要有实际内容`);
   }
 
-  // 3) Lead 的编排手册：persona 点名 + 文件存在
-  const persona = plugins.find((plugin) => plugin.id === "persona").config.prefix;
+  const persona = realPatch().plugins.find((plugin) => plugin.id === "persona").config.prefix;
   assert.ok(persona.includes("dev-team-lead"), "persona 应要求 Lead 先加载编排手册");
   assert.ok(existsSync(join(skillsDir, "dev-team-lead", "SKILL.md")), "缺少 dev-team-lead 手册");
 
-  // 4) 发现规则：skill 只能是 <name>/SKILL.md 一层，不能嵌套
   for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     assert.ok(existsSync(join(skillsDir, entry.name, "SKILL.md")), `${entry.name} 缺 SKILL.md`);
   }
 
-  // 5) 提示词与蓝图都要指向手册
   const stub = teamStub();
   const { start } = install(stub);
-  await start.execute({ goal: "手册接线验证", roles: config.roles.map((role) => role.name) }, exec(lead));
-  for (const role of config.roles) {
+  await start.execute({ goal: "手册接线验证", risk: "T1" }, exec(lead));
+  for (const role of config.roles.filter((item) => ["dev", "qa"].includes(item.name))) {
     const spawn = stub.calls.spawns.find((item) => item.name === role.name);
     assert.ok(spawn, `未创建 ${role.name}`);
-    assert.ok(
-      spawn.prompt[0].text.includes(`skill(name="${role.skill}")`),
-      `${role.name} 的提示词应要求先加载 ${role.skill}`,
-    );
+    assert.ok(spawn.prompt[0].text.includes(`skill(name="${role.skill}")`), `${role.name} 的提示词应要求先加载 ${role.skill}`);
   }
   const { sections } = install(teamStub());
   for (const role of config.roles) {
     assert.ok(sections[0].text.includes(`手册 ${role.skill}`), `蓝图应列出 ${role.name} 的手册名`);
   }
-  assert.ok(sections[0].text.includes("每个成员开工前先用 skill 工具加载自己的角色手册"));
 });
 
-test("dev_docs_init 真写盘：建齐文档、内容来自模板、幂等且不覆盖", () => {
+test("T2 标准车道：8 个阶段任务按依赖连成 DAG，3 个成员各拿自己的任务", async () => {
+  const stub = teamStub();
+  const { start } = install(stub);
+  const project = freshProject("lane-t2");
+  const result = await start.execute({ goal: "给订单列表加按状态筛选与分页", project }, exec(lead));
+
+  assert.equal(result.riskTier.id, "T2");
+  assert.deepEqual(result.riskTier.gates, ["契约门", "测试门", "验收门"]);
+  assert.equal(result.project, project);
+  assert.equal(result.docs.created.length, 12, "建队时应自动补齐 12 份项目文档");
+  assert.deepEqual(result.members.map((m) => m.target), ["pm", "dev", "qa"]);
+  assert.equal(result.failures.length, 0);
+
+  const index = stageIndex(result);
+  assert.deepEqual([...index.keys()], ["req", "contract", "testplan", "schema", "impl", "unit", "verify", "accept"]);
+  assert.deepEqual(blockersOf(index, "req"), []);
+  assert.deepEqual(blockersOf(index, "contract"), ["req"]);
+  assert.deepEqual(blockersOf(index, "testplan"), ["contract"], "测试计划依赖契约（不是依赖实现），才能与实现并行");
+  assert.deepEqual(blockersOf(index, "schema"), ["contract"]);
+  assert.deepEqual(blockersOf(index, "impl"), ["schema"]);
+  assert.deepEqual(blockersOf(index, "unit"), ["impl"]);
+  assert.deepEqual(blockersOf(index, "verify"), ["testplan", "unit"]);
+  assert.deepEqual(blockersOf(index, "accept"), ["verify"]);
+  assert.deepEqual(index.get("accept").owner, "lead", "验收阶段归 Lead");
+
+  // 成员认领的任务集合
+  const dev = result.members.find((m) => m.target === "dev");
+  assert.deepEqual(dev.taskIds, [
+    index.get("contract").taskId,
+    index.get("schema").taskId,
+    index.get("impl").taskId,
+    index.get("unit").taskId,
+  ]);
+  const qa = result.members.find((m) => m.target === "qa");
+  assert.deepEqual(qa.taskIds, [index.get("testplan").taskId, index.get("verify").taskId]);
+
+  // 任务描述：阶段、目标、项目根、依赖、写入范围（带项目前缀）、完成判定
+  const implTask = stub.calls.tasks.find((task) => task.subject.startsWith("实现"));
+  assert.ok(implTask.description.includes(`项目根目录：${project}`));
+  assert.ok(implTask.description.includes("前置阶段（未完成不要开始）：数据模型与迁移"));
+  assert.ok(implTask.description.includes("完成判定"));
+  assert.ok(implTask.writeScopes.includes(`${project}/app/`), `写范围应带项目前缀：${implTask.writeScopes.join(",")}`);
+  const verifyTask = stub.calls.tasks.find((task) => task.subject.startsWith("独立验证"));
+  assert.deepEqual(verifyTask.writeScopes.filter((s) => s.includes("tests/")), [`${project}/tests/integration/`]);
+  assert.deepEqual(implTask.blockedBy, [index.get("schema").taskId]);
+
+  // 成员提示词：自足 + 手册 + 风险等级 + 它的任务清单与依赖 + 交接格式
+  const devText = stub.calls.spawns.find((s) => s.name === "dev").prompt[0].text;
+  for (const needle of [
+    "你是「AI 开发团队」的后端/全栈开发",
+    'skill(name="dev-team-dev")',
+    "给订单列表加按状态筛选与分页",
+    `项目根目录：${project}`,
+    "本轮风险等级：T2",
+    index.get("contract").taskId,
+    index.get("impl").taskId,
+    `${project}/app/`,
+    "docs/DATA.md",
+    "[交接] 任务",
+  ]) {
+    assert.ok(devText.includes(needle), `dev 提示词缺少 ${needle}`);
+  }
+});
+
+test("T1 快车道：跳过需求与契约阶段，dev + qa 两人四步", async () => {
+  const stub = teamStub();
+  const { start } = install(stub);
+  const result = await start.execute({ goal: "修正金额格式化的小数位", risk: "T1" }, exec(lead));
+
+  assert.equal(result.riskTier.id, "T1");
+  assert.deepEqual(result.riskTier.gates, ["测试门", "验收门"]);
+  const index = stageIndex(result);
+  assert.deepEqual([...index.keys()], ["impl", "unit", "verify", "accept"]);
+  assert.deepEqual(blockersOf(index, "impl"), [], "快车道里被跳过的契约链不应阻塞实现");
+  assert.deepEqual(blockersOf(index, "accept"), ["verify"]);
+  assert.deepEqual(result.members.map((m) => m.target), ["dev", "qa"]);
+  assert.equal(result.docs, null, "没给 project 就不建文档");
+});
+
+test("T3 高风险车道：12 个阶段、7 个成员、六个门禁", async () => {
+  const stub = teamStub();
+  const { start } = install(stub);
+  const project = freshProject("lane-t3");
+  const result = await start.execute({ goal: "把登录改成手机号+验证码并迁移用户表", risk: "T3", project }, exec(lead));
+
+  assert.equal(result.riskTier.id, "T3");
+  assert.deepEqual(result.riskTier.gates, ["契约门", "测试门", "评审门", "安全门", "发布门", "验收门"]);
+  const index = stageIndex(result);
+  assert.deepEqual([...index.keys()], [
+    "req",
+    "design",
+    "contract",
+    "testplan",
+    "schema",
+    "impl",
+    "unit",
+    "verify",
+    "review",
+    "security",
+    "release",
+    "accept",
+  ]);
+  assert.deepEqual(blockersOf(index, "design"), ["req"]);
+  assert.deepEqual(blockersOf(index, "contract"), ["design", "req"]);
+  assert.deepEqual(blockersOf(index, "verify"), ["testplan", "unit"]);
+  assert.deepEqual(blockersOf(index, "review"), ["verify"]);
+  assert.deepEqual(blockersOf(index, "security"), ["review"]);
+  assert.deepEqual(blockersOf(index, "release"), ["security"]);
+  assert.deepEqual(blockersOf(index, "accept"), ["release"]);
+  assert.deepEqual(result.members.map((m) => m.target).sort(), [
+    "architect",
+    "dev",
+    "pm",
+    "qa",
+    "release",
+    "reviewer",
+    "security",
+  ]);
+  const releaseText = stub.calls.spawns.find((s) => s.name === "release").prompt[0].text;
+  assert.ok(releaseText.includes("docs/RUNBOOK.md") && releaseText.includes("回滚"));
+  const securityText = stub.calls.spawns.find((s) => s.name === "security").prompt[0].text;
+  assert.ok(securityText.includes("docs/SECURITY.md"));
+});
+
+test("风险等级与点名：T0 拒绝建队、未知等级报错、点名角色带进它负责的阶段", async () => {
+  const first = install(teamStub());
+  await assert.rejects(() => first.start.execute({ goal: "改文案", risk: "T0" }, exec(lead)), /不需要建队/);
+  await assert.rejects(() => first.start.execute({ goal: "x", risk: "T9" }, exec(lead)), /未定义的风险等级：T9/);
+
+  // T2 + reviewer：评审阶段被带进来
+  const withReviewer = teamStub();
+  const second = install(withReviewer);
+  const reviewed = await second.start.execute({ goal: "改造订单导出", risk: "T2", roles: ["reviewer"] }, exec(lead));
+  const reviewedIndex = stageIndex(reviewed);
+  assert.ok(reviewedIndex.has("review"), "点名 reviewer 应带进评审阶段");
+  assert.deepEqual(blockersOf(reviewedIndex, "review"), ["verify"]);
+  assert.ok(reviewed.members.some((m) => m.target === "reviewer"));
+
+  // T2 + security：连带评审（security 依赖 review）
+  const withSecurity = teamStub();
+  const third = install(withSecurity);
+  const secured = await third.start.execute({ goal: "接入支付回调", risk: "T2", roles: ["security"] }, exec(lead));
+  const securedIndex = stageIndex(secured);
+  assert.ok(securedIndex.has("security") && securedIndex.has("review"), "security 应连带 review");
+  assert.ok(secured.members.some((m) => m.target === "reviewer"), "连带阶段的所有者要进成员表");
+
+  // T1 + react-dev：带进前端阶段与它依赖的契约链
+  const withReact = teamStub();
+  const fourth = install(withReact);
+  const frontend = await fourth.start.execute({ goal: "做一个实时看板孤岛", risk: "T1", roles: ["react-dev"] }, exec(lead));
+  const frontendIndex = stageIndex(frontend);
+  assert.ok(frontendIndex.has("fe") && frontendIndex.has("contract"), "前端阶段应带进契约阶段");
+  assert.deepEqual(blockersOf(frontendIndex, "fe"), ["contract"]);
+  assert.ok(frontend.members.some((m) => m.target === "react-dev"));
+});
+
+test("dev_docs_init 真写盘：12 份文档、幂等且不覆盖、越界拒绝", () => {
   const { docs } = install(teamStub());
   const project = freshProject("scaffold");
   const first = docs.execute({ project }, exec(lead));
-  assert.equal(first.created.length, 10, `应创建 10 个文档，实际 ${first.created.length}`);
+  assert.equal(first.created.length, 12, `应创建 12 个文档，实际 ${first.created.length}`);
   assert.equal(first.existing.length, 0);
   assert.equal(first.missingTemplates.length, 0, "所有文档都应有内置模板");
-  for (const path of first.created) {
-    assert.ok(existsSync(join(project, path)), `缺少 ${path}`);
-  }
-  const projectMd = readFileSync(join(project, "docs/PROJECT.md"), "utf8");
-  assert.ok(projectMd.includes("项目说明"), "模板内容应被复制");
-  assert.ok(projectMd.includes("非目标"), "PROJECT.md 模板应包含非目标小节");
-  const agentsMd = readFileSync(join(project, "AGENTS.md"), "utf8");
-  assert.ok(agentsMd.includes("pyjoist") && agentsMd.includes("uv run pytest -q"), "AGENTS.md 应含栈与命令");
+  for (const path of first.created) assert.ok(existsSync(join(project, path)), `缺少 ${path}`);
+  assert.ok(readFileSync(join(project, "docs/PROJECT.md"), "utf8").includes("非目标"));
+  assert.ok(readFileSync(join(project, "docs/RUNBOOK.md"), "utf8").includes("回滚"));
+  assert.ok(readFileSync(join(project, "docs/SECURITY.md"), "utf8").includes("高危项"));
+  assert.ok(readFileSync(join(project, "AGENTS.md"), "utf8").includes("pyjoist"));
 
-  // 幂等：第二次全部已存在；且不改写人工内容
   writeFileSync(join(project, "docs/PROJECT.md"), "MARKER-人工内容\n", "utf8");
   const second = docs.execute({ project }, exec(lead));
   assert.equal(second.created.length, 0);
-  assert.equal(second.existing.length, 10);
+  assert.equal(second.existing.length, 12);
   assert.equal(readFileSync(join(project, "docs/PROJECT.md"), "utf8"), "MARKER-人工内容\n");
 
-  // 子集创建 + 未声明路径 + 目录不存在 + 越界拒绝
   const subset = docs.execute({ project, docs: ["docs/REVIEWS.md"] }, exec(lead));
   assert.deepEqual(subset.created, []);
   assert.throws(() => docs.execute({ project, docs: ["docs/NOPE.md"] }, exec(lead)), /未声明的文档/);
@@ -236,92 +452,22 @@ test("dev_docs_init 真写盘：建齐文档、内容来自模板、幂等且不
   assert.throws(() => docs.execute({ project: "/etc/dsh-must-refuse" }, exec(lead)), /拒绝/);
 });
 
-test("dev_team_start：带 project 时自动补文档、范围加前缀、角色提示词含项目根与文档职责", async () => {
-  const stub = teamStub();
-  const { start } = install(stub);
-  const project = freshProject("with-project");
-  const result = await start.execute({ goal: "给登录页加图形验证码", project }, exec(lead));
-
-  assert.deepEqual(result.members.map((m) => m.target), ["pm", "dev", "qa"]);
-  assert.equal(result.failures.length, 0);
-  assert.equal(result.project, project);
-  assert.equal(result.docs.created.length, 10, "建队时应自动补齐文档");
-
-  // 看板任务：subject 带阶段，writeScopes 带项目前缀，描述含文档职责与验收标准
-  assert.equal(stub.calls.tasks[0].subject, "产品经理｜需求");
-  const devTask = stub.calls.tasks[1];
-  assert.ok(devTask.description.includes(`项目根目录：${project}`));
-  assert.ok(devTask.description.includes("docs/API.md"));
-  assert.ok(devTask.description.includes("完成判定"));
-  assert.ok(devTask.writeScopes.includes(`${project}/app/`), `dev 范围应带项目前缀：${devTask.writeScopes.join(",")}`);
-  assert.ok(devTask.writeScopes.includes(`${project}/tests/unit/`));
-  const qaTask = stub.calls.tasks[2];
-  assert.deepEqual(
-    qaTask.writeScopes.filter((scope) => scope.includes("tests/")),
-    [`${project}/tests/integration/`],
-    "dev 与 qa 的 tests 范围不能重叠",
-  );
-
-  // 成员提示词：自足 + 项目根 + 文档职责 + 验收标准 + pyjoist 约定
-  const devText = stub.calls.spawns.find((s) => s.name === "dev").prompt[0].text;
-  for (const needle of [
-    "你是「AI 开发团队」的后端/全栈开发",
-    "给登录页加图形验证码",
-    `项目根目录：${project}`,
-    "t2",
-    `${project}/app/`,
-    "docs/DATA.md",
-    "Alembic",
-    "send_message 给 lead",
-  ]) {
-    assert.ok(devText.includes(needle), `dev 提示词缺少 ${needle}`);
-  }
-  const pmText = stub.calls.spawns.find((s) => s.name === "pm").prompt[0].text;
-  assert.ok(pmText.includes("非目标"), "pm 提示词应强调非目标");
-  const qaText = stub.calls.spawns.find((s) => s.name === "qa").prompt[0].text;
-  assert.ok(qaText.includes("docs/TESTING.md") && qaText.includes("最小复现"));
-});
-
-test("dev_team_start：不带 project 时范围不加前缀；点名与按需角色可用", async () => {
-  const stub = teamStub();
-  const { start } = install(stub);
-  const result = await start.execute({ goal: "修一个后端小 bug" }, exec(lead));
-  assert.equal(result.project, null);
-  assert.equal(result.docs, null);
-  assert.deepEqual(stub.calls.tasks[0].writeScopes, ["docs/PROJECT.md", "docs/DECISIONS.md"]);
-  assert.deepEqual(stub.calls.spawns.map((s) => s.name), ["pm", "dev", "qa"]);
-
-  const client = teamStub();
-  const second = install(client);
-  const clientResult = await second.start.execute(
-    { goal: "做一个数据看板 SPA", project: freshProject("spa"), roles: ["dev", "react-dev"] },
-    exec(lead),
-  );
-  assert.deepEqual(clientResult.members.map((m) => m.target), ["dev", "react-dev"]);
-  const reactText = client.calls.spawns.find((s) => s.name === "react-dev").prompt[0].text;
-  assert.ok(reactText.includes("frontend/") && reactText.includes("docs/FRONTEND.md"));
-  const reactTask = client.calls.tasks[1];
-  assert.ok(reactTask.description.includes("按需加入") || reactTask.description.includes("富客户端"));
-});
-
-test("仅 Lead 可调用 dev_team_start；缺少团队服务时给出可操作错误", async () => {
+test("权限与参数校验：仅 Lead 可建队、缺服务/缺 goal/空 project 报错", async () => {
   const { start, docs } = install(teamStub());
   await assert.rejects(() => start.execute({ goal: "x" }, exec({ id: "s-dev", role: "teammate" })), /只有 Team Lead/);
   await assert.rejects(() => start.execute({ goal: "x" }, exec(undefined)), /调用方 Agent/);
   await assert.rejects(() => start.execute({ goal: "  " }, exec(lead)), /goal 不能为空/);
+  await assert.rejects(() => start.execute({ goal: "x", roles: ["ops"] }, exec(lead)), /未定义的角色：ops/);
   assert.throws(() => docs.execute({ project: "" }, exec(lead)), /project 不能为空/);
 
   const bare = install(undefined);
   await assert.rejects(() => bare.start.execute({ goal: "x" }, exec(lead)), /Agent Teams 服务/);
 });
 
-test("未定义角色 / 重名成员跳过 / 单点建队失败", async () => {
-  const first = install(teamStub());
-  await assert.rejects(() => first.start.execute({ goal: "x", roles: ["ops"] }, exec(lead)), /未定义的角色：ops/);
-
+test("重名成员跳过、单点失败隔离", async () => {
   const dup = teamStub({ members: [{ name: "pm", role: "teammate", status: "inactive" }] });
-  const second = install(dup);
-  const mixed = await second.start.execute({ goal: "y", project: freshProject("dup") }, exec(lead));
+  const first = install(dup);
+  const mixed = await first.start.execute({ goal: "y", risk: "T2", project: freshProject("dup") }, exec(lead));
   assert.deepEqual(mixed.members.map((m) => m.target), ["dev", "qa"]);
   assert.ok(mixed.failures.some((f) => f.includes("pm") && f.includes("已存在")));
 
@@ -332,15 +478,15 @@ test("未定义角色 / 重名成员跳过 / 单点建队失败", async () => {
       { name: "qa", role: "teammate", status: "inactive" },
     ],
   });
-  const third = install(all);
-  await assert.rejects(() => third.start.execute({ goal: "z" }, exec(lead)), /没有可创建的角色/);
+  const second = install(all);
+  await assert.rejects(() => second.start.execute({ goal: "z", risk: "T2" }, exec(lead)), /没有可创建的角色/);
 
   const failing = teamStub({ failSpawn: ["qa"] });
-  const fourth = install(failing);
-  const partial = await fourth.start.execute({ goal: "w" }, exec(lead));
-  assert.deepEqual(partial.members.map((m) => m.target), ["pm", "dev"]);
-  assert.equal(partial.tasks.length, 3);
-  assert.ok(partial.failures.some((f) => f.includes("qa") && f.includes("任务 t3 已建")));
+  const third = install(failing);
+  const partial = await third.start.execute({ goal: "w", risk: "T1" }, exec(lead));
+  assert.deepEqual(partial.members.map((m) => m.target), ["dev"]);
+  assert.ok(partial.failures.some((f) => f.includes("qa") && f.includes("其任务已建")));
+  assert.equal(partial.stages.length, 4, "成员失败不应回滚已建的阶段任务");
 });
 
 test("清理测试临时目录", () => {

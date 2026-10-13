@@ -141,6 +141,8 @@
               forkProvider: fork
               # 项目文档骨架模板目录（相对本 bundle 根）
               templatesDir: templates/project
+              # 完整运营模型（流水线/质量门/交接协议/证据等级/WIP/度量/事故通道）
+              operatingModel: /home/eric/programming/ai_dev_team/docs/OPERATING-MODEL.md
 
               # ── 技术栈 ────────────────────────────────────────────────────
               stackSummary: Python 3.13 + FastAPI + asyncio + PostgreSQL + SQLAlchemy 2.x(async) + Alembic + Redis + HTMX；服务端 UI 用自研 pyjoist（import joist）做组件化。
@@ -208,17 +210,169 @@
                   title: 前端客户端
                   purpose: React SPA / 微信小程序的工程结构、构建与发布方式、与后端接口的对接说明（按需维护）
                   owner: frontend
+                - path: docs/SECURITY.md
+                  title: 安全与合规
+                  purpose: 威胁面与缓解清单（身份/越权/输入/注入/CSRF/重放/限流/日志脱敏/依赖风险），逐项结论与依据，高危项清零记录
+                  owner: security
+                - path: docs/RUNBOOK.md
+                  title: 运行手册
+                  purpose: 部署与发布顺序、迁移 expand-contract、开关、回滚方案、冒烟清单、监控告警、事故复盘
+                  owner: release
+
+              # ── 风险分级：Lead 建队前必须定级，等级决定成员与门禁 ────────────
+              riskTiers:
+                - id: T0
+                  title: 只改文档/注释/文案
+                  when: 不碰代码、不碰配置，Lead 自己做
+                  solo: true
+                  roles: []
+                  gates: []
+                - id: T1
+                  title: 小改（单模块，无契约变化）
+                  when: 单模块内的行为修正；不改接口、不改表结构
+                  roles: [dev, qa]
+                  gates: [测试门, 验收门]
+                - id: T2
+                  title: 功能/契约变化（默认）
+                  when: 新增接口、改响应结构、加字段、跨模块改动
+                  default: true
+                  roles: [pm, dev, qa]
+                  gates: [契约门, 测试门, 验收门]
+                - id: T3
+                  title: 高风险（鉴权/支付/资金/个人数据/迁移/架构/发布）
+                  when: 涉及鉴权、支付、资金、个人数据、数据迁移、并发核心路径、架构调整或发布流程
+                  roles: [pm, architect, dev, qa, reviewer, security, release]
+                  gates: [契约门, 测试门, 评审门, 安全门, 发布门, 验收门]
+
+              # ── 流水线：等级选中的阶段会建成看板任务并连成依赖 ──────────────
+              # tiers 决定默认包含；被点名角色（roles 参数）会把它负责的阶段连同依赖链带进来
+              # （所以点 reviewer 就有评审阶段，点 react-dev 就有前端阶段 + 它需要的契约阶段）
+              pipeline:
+                - id: req
+                  title: 需求与验收标准
+                  owner: pm
+                  dependsOn: []
+                  tiers: [T2, T3]
+                  deliverables:
+                    - 需求条目 + 逐条可判定的验收标准
+                    - 非目标清单（≥3 条）
+                    - 边界与失败路径清单（空态/并发/权限/超时/迁移）
+                - id: design
+                  title: 架构设计与非功能需求
+                  owner: architect
+                  dependsOn: [req]
+                  tiers: [T3]
+                  deliverables:
+                    - 模块边界与依赖方向
+                    - 性能/容量/可观测性/降级要求（可验证）
+                    - 关键选型与回滚方式（DECISIONS.md）
+                - id: contract
+                  title: 接口与数据契约
+                  owner: dev
+                  dependsOn: [req, design]
+                  tiers: [T2, T3]
+                  deliverables:
+                    - API.md：路由/请求/响应/错误码/鉴权/片段约定
+                    - DATA.md：表结构/索引/迁移计划/Redis key 与 TTL
+                    - 契约冻结（此后变更走变更控制）
+                - id: testplan
+                  title: 测试计划与用例清单
+                  owner: qa
+                  dependsOn: [contract]
+                  tiers: [T2, T3]
+                  deliverables:
+                    - 用例矩阵（成功/非法/空态/权限/并发/依赖故障/分页/迁移/HTMX 双分支）
+                    - 需要 dev 补的测试钩子清单
+                - id: schema
+                  title: 数据模型与迁移
+                  owner: dev
+                  dependsOn: [contract]
+                  tiers: [T2, T3]
+                  deliverables:
+                    - Alembic 迁移（expand/contract；空库可 upgrade head）
+                    - DATA.md 迁移历史更新
+                - id: impl
+                  title: 实现
+                  owner: dev
+                  dependsOn: [schema]
+                  tiers: [T1, T2, T3]
+                  deliverables:
+                    - 分层实现（service 事务 / router / 组件 + builder + 模板）
+                    - 遵守 pyjoist 组件化规范；范围外文件不动
+                - id: unit
+                  title: 单元与渲染测试
+                  owner: dev
+                  dependsOn: [impl]
+                  tiers: [T1, T2, T3]
+                  deliverables:
+                    - tests/unit/ 覆盖新逻辑、边界与组件渲染断言
+                    - ruff + pytest 本地全绿
+                - id: verify
+                  title: 独立验证与报告
+                  owner: qa
+                  dependsOn: [unit, testplan]
+                  tiers: [T1, T2, T3]
+                  deliverables:
+                    - tests/integration/ 集成与回归用例
+                    - TESTING.md 验证报告（命令 + 结果 + 失败项最小复现 + 未覆盖项）
+                - id: review
+                  title: 代码评审
+                  owner: reviewer
+                  dependsOn: [verify]
+                  tiers: [T3]
+                  deliverables:
+                    - REVIEWS.md：按 文件:行 的阻断/建议清单与放行结论
+                - id: security
+                  title: 安全评审
+                  owner: security
+                  dependsOn: [review]
+                  tiers: [T3]
+                  deliverables:
+                    - SECURITY.md：威胁面逐项结论（通过/不通过/不适用）与依据
+                    - 高危项清零确认
+                - id: release
+                  title: 发布准备与 Runbook
+                  owner: release
+                  dependsOn: [security]
+                  tiers: [T3]
+                  deliverables:
+                    - RUNBOOK.md：发布顺序、开关、回滚、冒烟清单、告警阈值
+                    - 不可回滚点的显式说明与缓解
+                - id: fe
+                  title: 前端实现（React SPA）
+                  owner: react-dev
+                  dependsOn: [contract]
+                  tiers: []
+                  deliverables:
+                    - frontend/ 下的 SPA（Vite + TS）与构建脚本
+                    - FRONTEND.md 工程与对接说明；接口需求交 dev 更新 API.md
+                    - 关键交互的测试或明确的手工验证步骤
+                - id: mp
+                  title: 小程序实现
+                  owner: miniprogram-dev
+                  dependsOn: [contract]
+                  tiers: []
+                  deliverables:
+                    - miniprogram/ 工程与分包策略
+                    - FRONTEND.md 小程序小节与真机验证步骤
+                    - 登录/支付链路按官方流程，凭据不进仓库
+                - id: accept
+                  title: 验收与交付
+                  owner: lead
+                  dependsOn: [release]
+                  tiers: [T1, T2, T3]
+                  deliverables:
+                    - Lead 亲自复跑验收命令 + 关键路径
+                    - WORKLOG.md 当轮条目（含一次通过率/返工/门禁失败点/阻塞时长）
 
               # ── 工作流：按阶段写清交接顺序 ──────────────────────────────
               workflow:
-                - 立项：lead 确认目标与非目标，dev_docs_init 建齐项目文档骨架，pm 把需求写进 PROJECT.md 并给出非目标
-                - 契约：dev 在 API.md / DATA.md 定接口与数据模型（含错误码、幂等与并发假设），pm 确认业务规则，lead 锁定范围
-                - 拆分：lead 把工作拆成任务、划出互不重叠的写入范围并锁定依赖（契约 → 实现 → 测试 → 评审）
-                - 实现：dev 按契约写代码 + Alembic 迁移 + pytest 用例，边写边跑测试；pyjoist 组件与模板按组件化规范落地
-                - 验证：qa 独立复跑命令、补边界用例，把命令与结果写进 TESTING.md；缺陷回给 lead 派修
-                - 评审：需要时点名 reviewer，按 文件:行 给阻断/建议并记入 REVIEWS.md
-                - 验收：lead 在最新代码上亲自跑验收命令与关键路径，逐条对照验收标准
-                - 收尾：lead 更新 WORKLOG.md（做了什么/怎么验证/下一步）与 DECISIONS.md，向用户汇报「做了什么 / 怎么验证 / 遗留与风险」
+                - 定级：lead 先判风险等级 T0–T3（拿不准取高一级），等级决定成员、阶段任务与门禁
+                - T1 快车道：impl → unit → verify → accept（dev + qa），两人四步
+                - T2 标准车道：req → contract →（testplan ∥ schema → impl → unit）→ verify → accept；契约冻结后测试计划与实现并行
+                - T3 高风险车道：标准车道前加 design，后加 review → security → release；六道门全过才交付
+                - 事故通道：S1/S2 先止血（回滚或关开关）再复盘，补测试与告警后按 T3 回归
+                - 收尾：lead 亲自验收、更新 WORKLOG/DECISIONS，并记录一次通过率/返工次数/门禁失败点/阻塞时长
 
               # ── 团队硬约束（每个成员都会收到）──────────────────────────
               rules:
@@ -232,6 +386,13 @@
                 - 发现范围外的 bug 只报告，不顺手改；不碰其他项目目录
                 - 所有写入都限制在当前项目根目录内
 
+                - 开工先定风险等级（T0–T3），等级决定成员与门禁；拿不准取高一级，等级写进 WORKLOG.md
+                - 契约冻结后要改契约，先发 [契约] 变更消息（原因/新契约/影响面），由 lead 决定是否重开契约阶段并重跑验证
+                - 没有证据不算完成：交付必须带「命令 + 结果」；改动后旧证据作废，必须重跑
+                - 同一时刻 WIP ≤ 3；前置任务未完成不要开工，返工比等待贵
+                - 影响线上的改动必须有回滚方案与开关；没有回滚方案不允许发布
+                - 目录/模块结构或依赖方向的调整属于架构变更 → 升级为 T3 并让 architect 出现（ARCHITECTURE.md 由 architect 维护）
+                - 同一时刻每个文件只有一个写入者；共享文件（pyproject.toml、uv.lock、migrations/versions/、CI 配置）改动前先报备 lead
               # ── 角色表 ──────────────────────────────────────────────────
               # name 同时是 teammate 名称与看板任务归属；create: false 表示出现这类需求时才点名创建
               roles:
@@ -273,14 +434,13 @@
                     - 可运行实现（uv run uvicorn app.main:app）
                     - pytest 用例（覆盖新逻辑与边界）
                     - Alembic 迁移（如需）
-                    - docs/ARCHITECTURE.md、docs/API.md、docs/DATA.md 更新
+                    - docs/API.md、docs/DATA.md 更新（结构变化属 T3，由 architect 更新 ARCHITECTURE.md）
                   acceptance:
                     - uv run pytest -q 全绿，uv run ruff check . 无错误
                     - 新增/变更的接口与数据模型已在 API.md、DATA.md 写清
                     - async 路径里没有同步阻塞调用
                     - 前端片段在整页与 HTMX 两条路径下渲染结果一致
                   docs:
-                    - docs/ARCHITECTURE.md
                     - docs/API.md
                     - docs/DATA.md
                   writeScopes:
@@ -289,7 +449,6 @@
                     - migrations/
                     - tests/unit/
                     - pyproject.toml
-                    - docs/ARCHITECTURE.md
                     - docs/API.md
                     - docs/DATA.md
                 - name: qa
@@ -383,3 +542,77 @@
                   writeScopes:
                     - miniprogram/
                     - docs/FRONTEND.md
+                - name: architect
+                  skill: dev-team-architect
+                  title: 架构与技术设计
+                  description: 定模块边界、依赖方向、数据流与非功能需求（性能/安全/可观测性），给出可实现的架构决策与迁移兼容策略
+                  phase: 架构设计
+                  create: false
+                  duties:
+                    - 把需求拆成模块与边界，明确依赖方向（谁能依赖谁），写进 ARCHITECTURE.md
+                    - 定义非功能需求：性能预算（P95/并发）、容量与索引策略、错误与降级、可观测性（日志/指标/告警）
+                    - 对关键选型给出 2 个以上备选与取舍，追加进 DECISIONS.md（含回滚方式）
+                    - 与 dev 复核契约：接口粒度、是否有隐藏的跨模块耦合、错误语义是否一致
+                    - 定迁移与兼容策略：expand/contract 顺序、双写窗口、回填与回滚
+                  deliverables:
+                    - docs/ARCHITECTURE.md 更新（模块、边界、数据流、NFR）
+                    - docs/DECISIONS.md 追加关键选型
+                    - 可回滚的迁移与兼容策略
+                  acceptance:
+                    - 每个模块有明确职责与依赖方向，没有循环依赖
+                    - NFR 可验证（有指标或明确检查方式）
+                    - 关键选型都有被否方案与回滚方式
+                  docs:
+                    - docs/ARCHITECTURE.md
+                    - docs/DECISIONS.md
+                  writeScopes:
+                    - docs/ARCHITECTURE.md
+                    - docs/DECISIONS.md
+                - name: security
+                  skill: dev-team-security
+                  title: 安全与合规
+                  description: 对鉴权、支付、个人数据与对外接口做威胁建模与高危项清零，产出可核查的安全清单
+                  phase: 安全评审
+                  create: false
+                  duties:
+                    - 列出威胁面：身份与会话、越权、输入校验、注入、CSRF、重放、限流、日志与凭据脱敏、依赖风险
+                    - 逐项核对实现并标注 通过/不通过/不适用，给出依据（文件:行）；高危项必须清零才放行
+                    - 检查密钥与凭据：只在环境变量，仓库与日志里不出现
+                    - 支付/资金/个人数据路径按最严标准复核幂等、审计与对账
+                  deliverables:
+                    - docs/SECURITY.md 威胁与缓解清单（逐项结论与依据）
+                    - 高危项修复任务（交 lead 派修）
+                  acceptance:
+                    - 清单覆盖全部威胁面且每项有结论与依据（文件:行）
+                    - 高危项为 0；未清零必须明确写「不得发布」
+                  docs:
+                    - docs/SECURITY.md
+                  writeScopes:
+                    - docs/SECURITY.md
+                - name: release
+                  skill: dev-team-release
+                  title: 发布与可观测性
+                  description: 把功能安全送上生产：发布顺序、迁移 expand-contract、开关、回滚、冒烟、监控告警与事故复盘
+                  phase: 发布准备
+                  create: false
+                  duties:
+                    - 写清发布步骤与顺序（迁移 → 代码 → 开关 → 验证），每一步的失败处理与回滚
+                    - 迁移采用 expand/contract；大表回填分批；不可回滚的点必须显式标注与缓解
+                    - 新功能默认挂开关，出问题一键关闭而不必回滚代码
+                    - 补齐可观测性：请求日志、错误计数、延迟指标、关键告警阈值
+                    - 冒烟清单：发布后逐条可执行的命令或路径
+                    - 事故复盘：现象、时间线、根因、修复、防复发、监控缺口
+                  deliverables:
+                    - docs/RUNBOOK.md（部署、回滚、冒烟、告警、事故复盘）
+                    - 回滚方案与开关说明
+                  acceptance:
+                    - 每一步都有回滚或明确的「不可回滚 + 缓解」
+                    - 冒烟清单可照做且已有人执行
+                    - 告警阈值明确，能覆盖本次改动的主要失败模式
+                  docs:
+                    - docs/RUNBOOK.md
+                  writeScopes:
+                    - docs/RUNBOOK.md
+                    - .github/workflows/
+                    - Dockerfile
+                    - deploy/

@@ -1,7 +1,10 @@
 # 团队协作设计
 
 > 这份文件回答一个问题：**这支团队按什么规则开工、交接、验证、收尾。**
-> 机器可读的那份在 [`cordis.patch.yml`](../cordis.patch.yml) 的 `dev-team` 行——角色、技术栈、命令、工作流、硬约束、项目文档清单都在那里。两者要保持一致：改配置时同步改本文，改本文时同步改配置。
+> **详细设计在 [`OPERATING-MODEL.md`](OPERATING-MODEL.md)**：风险分级、三条车道（快/标准/高风险）+ 事故通道、
+> 12 个阶段的产物与完成判定、六道质量门、DoR/DoD、所有权矩阵、交接协议、证据等级、WIP 与度量。
+> 机器可读的那份在 [`cordis.patch.yml`](../cordis.patch.yml) 的 `dev-team` 行（`roles` / `riskTiers` / `pipeline` / `projectDocs`）。
+> 三处要保持一致：改配置时同步改这两份文档，改文档时同步改配置。
 
 ## 0. 设计原则
 
@@ -18,7 +21,10 @@
 | `pm` 产品经理 | 是 | 用户目标、现有 `docs/PROJECT.md` | 需求条目 + 逐条验收标准、非目标、边界清单 | `docs/PROJECT.md`、`docs/DECISIONS.md` | → lead（锁定范围）、dev（业务规则） |
 | `dev` 后端/全栈 | 是 | 需求与验收标准 | 契约（API/DATA）、实现、Alembic 迁移、单元测试、架构更新 | `app/`、`templates/`、`migrations/`、`tests/unit/`、`pyproject.toml`、`docs/ARCHITECTURE.md`、`docs/API.md`、`docs/DATA.md` | → qa（可验证的增量）、lead（阻塞与决策） |
 | `qa` 测试/验证 | 是 | dev 的增量 + 验收标准 | 集成/回归用例、独立验证报告（命令 + 结果）、缺陷复现 | `tests/integration/`、`docs/TESTING.md` | → lead（结论）、dev（缺陷） |
-| `reviewer` 代码评审 | 否（点名） | 提交/分支 + 契约 | 按 文件:行 的阻断/建议清单 | `docs/REVIEWS.md` | → lead（是否放行） |
+| `reviewer` 代码评审 | 否（T3/点名） | 验证后的增量 + 契约 | 按 文件:行 的阻断/建议清单 | `docs/REVIEWS.md` | → lead（是否放行） |
+| `architect` 架构设计 | 否（T3） | 需求 + 现状架构 | 模块边界、依赖方向、NFR、选型与迁移兼容策略 | `docs/ARCHITECTURE.md`、`docs/DECISIONS.md` | → dev（实现基准）、reviewer（评审基准） |
+| `security` 安全合规 | 否（T3/点名） | 契约 + 实现 + 信任边界 | 威胁面逐项结论与依据、高危项清零 | `docs/SECURITY.md` | → lead（是否放行）、release（发布前提） |
+| `release` 发布运维 | 否（T3/点名） | 全部产出 + 安全结论 | 发布顺序、回滚、开关、冒烟、告警、事故复盘 | `docs/RUNBOOK.md`、CI/部署文件 | → lead（发布结论） |
 | `react-dev` React 前端 | 否（点名） | 需要富交互或独立 SPA 的需求 | `frontend/` SPA、构建脚本、对接说明 | `frontend/`、`docs/FRONTEND.md` | → dev（契约缺口）、qa（验证步骤） |
 | `miniprogram-dev` 小程序 | 否（点名） | 要交付微信小程序的需求 | `miniprogram/` 工程、预览与真机步骤 | `miniprogram/`、`docs/FRONTEND.md` | → dev（契约缺口）、qa（验证步骤） |
 
@@ -33,6 +39,10 @@
 | 放行/交付用户 | I | I | C | C | **A** |
 | 项目文档完整性 | R | R | R | R | **A** |
 
+| 架构与非功能需求 | C | C | I | C | **A**（architect 出方案） |
+| 安全放行 | I | C | C | C | **A**（security 出结论，高危未清零不得发布） |
+| 发布/回滚决策 | I | C | C | I | **A**（release 出方案） |
+
 ### 1.1 角色手册（skill）
 
 **契约在配置，方法在手册。** `cordis.patch.yml` 里每个角色的 `duties` / `deliverables` / `acceptance` / `writeScopes`
@@ -46,6 +56,9 @@
 | dev | `dev-team-dev` | 分层写法、async 底线、SQLAlchemy 事务/分页、Alembic 三步加列、Redis 约定、pyjoist 组件与 builder 完整示例、HTMX、测试配方、交付自检 |
 | qa | `dev-team-qa` | 复跑纪律、用例矩阵、用例示例、最小复现报告、TESTING.md 结构、升级判定 |
 | reviewer | `dev-team-reviewer` | 九步评审顺序、阻断/建议分级、REVIEWS.md 格式、高频阻断清单、只读纪律 |
+| architect | `dev-team-architect` | 模块边界与依赖方向、可验证 NFR、选型 ADR（含回滚）、expand/contract 迁移策略、契约复核 |
+| security | `dev-team-security` | 信任边界、10 项威胁面逐项核对、结论必须落到 文件:行、高危清零与「不得发布」判定 |
+| release | `dev-team-release` | 发布顺序与回滚触发阈值、迁移分批与不可回滚点、冒烟清单、可观测性与告警、事故复盘 |
 | react-dev | `dev-team-react` | 何时才用 React、Vite 工程结构、API 客户端封装、状态从简、与 HTMX 的边界、验证清单 |
 | miniprogram-dev | `dev-team-miniprogram` | 小程序工程结构、分包与体积、登录态与 401、支付/订阅消息、真机验证、密钥红线 |
 
@@ -56,22 +69,22 @@
   「配置里的 skill」与「磁盘上的 SKILL.md」一一对应、frontmatter 合法、提示词里带加载指令。
 - 手册与配置/任务冲突时，**以任务描述与 `docs/` 契约**为准（手册每份开头都写了这一条）。
 
-## 2. 工作流：八个阶段与交接物
+## 2. 工作流：三条车道
 
-每个阶段的「完成」都由文件或命令证明，不靠口头。
+Lead 建队前先定**风险等级**，等级决定成员、阶段任务与门禁（完整阶段表与产物见
+[OPERATING-MODEL.md](OPERATING-MODEL.md#4-阶段产物与完成判定)）：
 
-| # | 阶段 | 谁做 | 输入 | 产出（落盘在哪） | 完成判定 |
-|---|---|---|---|---|---|
-| 1 | 立项 | lead + pm | 用户目标 | `docs/PROJECT.md`（含非目标）、文档骨架齐备 | 非目标已写；`docs/` 文件齐全 |
-| 2 | 契约 | dev，pm 确认 | 需求条目 | `docs/API.md`、`docs/DATA.md` | 每个接口有请求/响应/错误码；每张表有字段与索引 |
-| 3 | 拆分 | lead | 契约 | 看板任务 + 写入范围 + 依赖关系 | 范围互不重叠；依赖顺序正确；每任务有验收标准 |
-| 4 | 实现 | dev | 契约 + 任务 | 代码、迁移、`tests/unit/` | `pytest`/`ruff` 通过；契约文档已更新 |
-| 5 | 验证 | qa | 实现 + 验收标准 | `tests/integration/`、`docs/TESTING.md` | 报告含命令与结果；失败项有最小复现 |
-| 6 | 评审 | reviewer（按需） | 提交 + 契约 | `docs/REVIEWS.md` | 每条结论可定位到 文件:行 |
-| 7 | 验收 | lead | 全部产出 | 验收记录写进 `docs/WORKLOG.md` | Lead 亲自跑通验收命令与关键路径 |
-| 8 | 收尾 | lead | — | `docs/WORKLOG.md`、`docs/DECISIONS.md` | 用户拿到「做了什么/怎么验证/遗留与风险」 |
+| 车道 | 等级 | 阶段序列 | 成员 |
+|---|---|---|---|
+| 快车道 | T1 | `impl → unit → verify → accept` | dev + qa |
+| 标准车道 | T2 | `req → contract →（testplan ∥ schema → impl → unit）→ verify → accept` | pm + dev + qa |
+| 高风险车道 | T3 | 标准车道前加 `design`，后加 `review → security → release` | + architect、reviewer、security、release |
+| 事故通道 | — | 先止血（回滚/关开关）→ 复盘 → 按 T3 回归 | lead 指挥，release 复盘 |
 
-## 3. 四道质量门
+`dev_team_start` 会把这些阶段建成**带依赖的看板任务**：前置未完成的任务是 not-ready，谁在等谁一眼可见。
+契约冻结（`contract` 完成）之后 dev 实现与 qa 集成用例同时开工。
+
+## 3. 六道质量门（契约 / 测试 / 评审 / 安全 / 发布 / 验收）
 
 - **契约门**：`API.md` / `DATA.md` 没写清 → 不允许 dev 写业务实现。
 - **测试门**：`uv run pytest -q` 与 `uv run ruff check .` 必须全绿；qa 的独立报告必须带命令与输出摘要。
@@ -122,6 +135,9 @@
 
 | 触发条件 | 加谁 | 怎么加 | 注意 |
 |---|---|---|---|
+| T3（鉴权/支付/资金/个人数据/迁移/架构/发布） | `architect` / `reviewer` / `security` / `release` | T3 自动带上这四个：定边界与 NFR、独立评审、安全清零、发布与回滚 |
+| 只想要独立评审（T2 的关键改动） | `reviewer` | `roles: ["reviewer"]` 会把 `review` 阶段一并带进本轮 |
+| 要上线、要迁移、出过事故 | `release` | 上线前必须有回滚方案与冒烟清单，否则不许发布 |
 | 需要富客户端交互、复杂本地状态、图表联动、独立 SPA | `react-dev` | Lead 调 `dev_team_start` 时带 `roles: ["react-dev"]`（或直接对它 `spawn_teammate`） | 只在 `frontend/` 内建工程；不把 React 塞进 HTMX 页面 |
 | 要交付微信小程序 | `miniprogram-dev` | 同上，`roles: ["miniprogram-dev"]` | 复用同一套 API；凭据不进仓库 |
 | 两个客户端角色同时在场 | 两者 | 先建一个，稳定后再建第二个 | 它们共享 `docs/FRONTEND.md`，各自只追加自己的小节 |

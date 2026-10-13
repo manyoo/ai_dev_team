@@ -46,17 +46,29 @@ uv run uvicorn app.main:app --reload
 | 文件 | 所有者 | 什么时候更新 |
 |---|---|---|
 | `docs/PROJECT.md` | pm | 需求、范围、非目标、验收标准变化时 |
-| `docs/ARCHITECTURE.md` | dev | 模块边界、目录、依赖、运行方式变化时 |
+| `docs/ARCHITECTURE.md` | architect | 模块边界、目录、依赖方向、非功能需求变化时（结构变更属 T3） |
 | `docs/API.md` | dev | 任何接口/错误码/片段约定变化时（先改这里再写实现） |
 | `docs/DATA.md` | dev | 表结构、索引、迁移、Redis key 变化时 |
-| `docs/DECISIONS.md` | lead | 每做一次技术或产品决策（追加） |
-| `docs/WORKLOG.md` | lead | 每轮工作结束（追加：做了什么/怎么验的/下一步） |
+| `docs/DECISIONS.md` | architect / lead | 每做一次技术或产品决策（追加） |
+| `docs/WORKLOG.md` | lead | 每轮工作结束（追加：做了什么/怎么验的/下一步/当轮指标） |
 | `docs/TESTING.md` | qa | 每次独立验证后 |
 | `docs/REVIEWS.md` | reviewer | 每次评审（追加，按 文件:行 记录） |
+| `docs/SECURITY.md` | security | 涉及鉴权/支付/个人数据/对外接口时（高危项未清零不得发布） |
+| `docs/RUNBOOK.md` | release | 发布、迁移顺序、回滚、冒烟、告警；事故后追加复盘 |
 | `docs/FRONTEND.md` | react-dev / miniprogram-dev | 客户端工程或对接方式变化时 |
+
+## 风险分级与门禁（建队前先定级）
+
+- **T0** 只改文档/注释：Lead 自己做，不建队
+- **T1** 单模块行为修正（不改接口与表结构）：dev + qa，过测试门与验收门
+- **T2** 功能/契约变化：pm + dev + qa，过契约门、测试门、验收门
+- **T3** 鉴权/支付/资金/个人数据/迁移/架构/发布：再加 architect、reviewer、security、release，六道门全过
+- 拿不准取高一级；等级与门禁结果记进 `docs/WORKLOG.md`
 
 ## 红线
 
 - 不擅自加依赖；不动自己任务范围外的文件；不手改数据库
+- 契约冻结后要改契约，先发变更消息等 lead 确认；改动后旧证据作废，必须重跑
+- 同一时刻每个文件只有一个写入者；共享文件（`pyproject.toml`、`uv.lock`、`migrations/versions/`、CI 配置）改动前先报备 lead
 - 密钥、令牌、连接串不进仓库（只写环境变量说明）
 - 交付必须带命令与结果，不接受只写「已完成」

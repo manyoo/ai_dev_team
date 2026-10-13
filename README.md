@@ -1,27 +1,29 @@
 # AI 开发团队（DSH agent preset + bundle）
 
-把「一支开发团队」做成 DSH 的可选会话模式：在新建会话里选 **开发团队**，Lead 就带着预先定义好的角色、
-技术栈、工作流和文档纪律开工。默认栈是 **Python 3.13 + FastAPI + asyncio + PostgreSQL + SQLAlchemy(async)
-+ Alembic + Redis + HTMX**，服务端 UI 用本机自研的 **pyjoist**（`import joist`）做组件化。
+把「一支开发团队」做成 DSH 的可选会话模式：在新建会话里选 **开发团队**，Lead 先给需求定**风险等级**，
+再按等级把**流水线阶段建成带依赖的看板任务**、拉起对应角色，最后自己验收交付。
 
-- preset id：`devteam`（模式名册 order 6）
-- 包名：`@local/dsh-ai-dev-team`
-- 依赖：profile 需已启用 `@deepseek-ai/dsh-experimental-agent-team-profile`（提供 Team 工具与任务看板）
-- 设计文档：[`docs/TEAM.md`](docs/TEAM.md)（协作规则）｜[`docs/DOCS.md`](docs/DOCS.md)（项目 md 文档协议）
-- 机器可读的团队配置：[`cordis.patch.yml`](cordis.patch.yml) 的 `dev-team` 行
+默认栈：**Python 3.13 + FastAPI + asyncio + PostgreSQL + SQLAlchemy(async) + Alembic + Redis + HTMX**，
+服务端 UI 用本机自研的 **pyjoist**（`import joist`）做组件化。
+
+- preset id：`devteam`（模式名册 order 6）｜ 包名：`@local/dsh-ai-dev-team`
+- 依赖：profile 需已启用 `@deepseek-ai/dsh-experimental-agent-team-profile`
+- **运营模型（必读）**：[docs/OPERATING-MODEL.md](docs/OPERATING-MODEL.md) —— 风险分级、三条车道、六道门、交接协议、证据等级、WIP 与度量、事故通道
+- 角色与协作总览：[docs/TEAM.md](docs/TEAM.md) ｜ 项目文档协议：[docs/DOCS.md](docs/DOCS.md)
+- 机器可读的唯一真源：[cordis.patch.yml](cordis.patch.yml) 的 `dev-team` 行（`roles` / `riskTiers` / `pipeline` / `projectDocs`）
 
 ## 目录
 
 ```
 .
-├── cordis.patch.yml        # preset 声明 + 常规插件行 + dev-team 配置（角色/栈/工作流/文档清单）
-├── lib/index.js            # host 半：配置校验、蓝图段落、dev_team_start、dev_docs_init
-├── skills/dev-team-*/SKILL.md  # 角色手册（7 份：lead / pm / dev / qa / reviewer / react / miniprogram）
-├── templates/project/      # 每个新项目的 md 文档骨架（10 个文件，含 AGENTS.md）
-├── docs/TEAM.md            # 团队协作设计：角色、交接、质量门、任务板、沟通协议、扩编
-├── docs/DOCS.md            # 项目文档协议：文件清单、所有者、更新时机、写作规则
-├── test/dev-team.test.mjs  # 集成测试（含真写盘的脚手架与手册一致性测试）
-└── README.md
+├── cordis.patch.yml            # preset 声明 + 常规插件行 + dev-team 配置（角色/等级/流水线/栈/文档清单）
+├── lib/index.js                # host 半：配置校验、蓝图段落、dev_team_start（DAG 规划）、dev_docs_init
+├── skills/dev-team-*/SKILL.md  # 角色手册 ×10（lead / pm / dev / qa / reviewer / architect / security / release / react / miniprogram）
+├── templates/project/          # 项目 md 骨架 ×12（含 AGENTS.md）；dev_docs_init 复制到项目
+├── docs/OPERATING-MODEL.md     # 运营模型（本次设计的核心）
+├── docs/TEAM.md                # 角色、RACI、交接、质量门总览
+├── docs/DOCS.md                # 项目文档协议
+└── test/dev-team.test.mjs      # 集成测试 ×11（含真写盘脚手架与 DAG 规划）
 ```
 
 ## 安装 / 更新
@@ -35,106 +37,107 @@ plugin_manager  action: remove_bundle   target: @local/dsh-ai-dev-team
 plugin_manager  action: install_bundle  target: /home/eric/programming/ai_dev_team
 ```
 
-- 对已安装的 bundle 重复 `install_bundle` 会返回 `ambiguous-install` 且 `changed: false`（幂等提示，状态不变），要带上改动必须走「移除-安装」两步。
+- 对已安装 bundle 重复 `install_bundle` 返回 `ambiguous-install`（幂等提示，状态不变）；要带上改动必须走「移除-安装」。
+- 改 **skill 正文**不用重装（目录被监视）；改 **skill 名字、手册目录、根路径、preset 配置**要重装。
 - 已有会话保留启动时的 preset 版本；验证改动要开新会话。
-- 安装会在 Host 进程执行插件代码，需要授权。
 
 ## 怎么用
 
-1. 新开会话，模式选 **开发团队**。
-2. 提需求，例如「给订单列表加按状态筛选 + 分页，HTMX 局部刷新，带测试」，并说明项目根目录。
-3. Lead 会：`todo_write` 拆阶段 → `dev_docs_init` / `dev_team_start` 建队（自动补齐项目 md）→ `send_message` 派活 → 自己复核 diff 并重跑验收 → 按「做了什么 / 怎么验证 / 遗留与风险」汇报。
+1. 新开会话，模式选 **开发团队**；把项目根目录告诉 Lead。
+2. Lead 定级并建队：
 
-两个工具：
+```python
+dev_team_start(
+  goal="给订单列表加按状态筛选 + 分页，HTMX 局部刷新，带测试",   # 必须自足
+  project="myapp",        # 项目根（自动补齐 12 份项目 md）
+  risk="T2",              # 不传用默认等级
+  roles=["reviewer"],     # 可选：点名额外角色（连带其阶段与依赖）
+)
+```
+
+3. 工具返回 `riskTier`（含门禁）、`stages`（阶段 → taskId → blockedBy）、`members`（每人认领的 taskId）、`failures`；
+   随后 Lead 用 `send_message` 派活/纠偏、`wait_agent` 等进展、`interrupt_agent` 止损，最后**亲自验收**。
 
 | 工具 | 谁可调用 | 作用 |
 |---|---|---|
-| `dev_docs_init(project, docs?)` | 任何成员 | 按 `templates/project/**` 在项目里创建缺失的 md 文档（含 `AGENTS.md`）；**只创建缺失文件，绝不覆盖**；项目目录不存在会报错 |
-| `dev_team_start(goal, project?, roles?)` | 仅 Lead | 补齐缺失文档 → 为每个角色建看板任务（含交付物、写入范围、文档职责、完成判定）→ 按角色手册创建 teammate。一个目标调一次 |
+| `dev_team_start(goal, project?, risk?, roles?)` | 仅 Lead | 定级 → 补文档 → 按等级把流水线建成**带依赖的看板任务** → 创建成员（每个成员拿到自己的全部阶段任务） |
+| `dev_docs_init(project, docs?)` | 任何成员 | 按 `templates/project/**` 创建缺失的 12 份项目 md；**只创建缺失文件，绝不覆盖** |
 
-## 团队一览
+## 风险分级与三条车道
 
-| 角色 | 默认建 | 角色手册（skill） | 写入范围 |
+| 等级 | 判定 | 成员 | 门禁 | 阶段（自动建成看板任务） |
+|---|---|---|---|---|
+| **T0** | 只改文档/注释/文案 | 不建队（Lead 自己做） | — | — |
+| **T1** | 单模块行为修正，不改接口与表结构 | dev + qa | 测试门、验收门 | `impl → unit → verify → accept` |
+| **T2**（默认） | 新接口/改响应/加字段/跨模块 | pm + dev + qa | 契约门、测试门、验收门 | `req → contract →（testplan ∥ schema → impl → unit）→ verify → accept` |
+| **T3** | 鉴权/支付/资金/个人数据/迁移/架构/发布 | + architect、reviewer、security、release（7 人） | 六道门全过 | T2 前加 `design`，后加 `review → security → release` |
+
+- **契约冻结（contract 完成）是并行起跑线**：dev 实现、qa 集成用例同时开工（`testplan` 只依赖契约，不依赖实现）。
+- **点名角色会带进它的阶段与依赖链**：`roles:["security"]` 会连 `review` + `reviewer` 一起进来；`roles:["react-dev"]` 会带进 `fe` 与它需要的 `contract`。
+- 看板上的 `blockedBy` 就是「谁在等谁」；前置未完成的任务是 not-ready。
+
+## 团队一览（10 份角色手册）
+
+| 角色 | 默认 | 手册 | 写入范围 |
 |---|---|---|---|
-| `pm` 产品经理 | ✅ | `dev-team-pm` | `docs/PROJECT.md`、`docs/DECISIONS.md` |
-| `dev` 后端/全栈 | ✅ | `dev-team-dev` | `app/`、`templates/`、`migrations/`、`tests/unit/`、`pyproject.toml`、`docs/{ARCHITECTURE,API,DATA}.md` |
-| `qa` 测试/验证 | ✅ | `dev-team-qa` | `tests/integration/`、`docs/TESTING.md` |
-| `reviewer` 代码评审 | 点名 | `dev-team-reviewer` | `docs/REVIEWS.md` |
+| Lead（编排） | 会话本身 | `dev-team-lead` | `docs/WORKLOG.md`、`docs/DECISIONS.md` 汇总 |
+| `pm` 产品经理 | T2/T3 | `dev-team-pm` | `docs/PROJECT.md`、`docs/DECISIONS.md` |
+| `dev` 后端/全栈 | T1/T2/T3 | `dev-team-dev` | `app/`、`templates/`、`migrations/`、`tests/unit/`、`pyproject.toml`、`docs/{API,DATA}.md` |
+| `qa` 测试/验证 | T1/T2/T3 | `dev-team-qa` | `tests/integration/`、`docs/TESTING.md` |
+| `reviewer` 代码评审 | T3/点名 | `dev-team-reviewer` | `docs/REVIEWS.md` |
+| `architect` 架构设计 | T3 | `dev-team-architect` | `docs/ARCHITECTURE.md`、`docs/DECISIONS.md` |
+| `security` 安全合规 | T3/点名 | `dev-team-security` | `docs/SECURITY.md` |
+| `release` 发布运维 | T3/点名 | `dev-team-release` | `docs/RUNBOOK.md`、`.github/workflows/`、`Dockerfile`、`deploy/` |
 | `react-dev` React 前端 | 点名 | `dev-team-react` | `frontend/`、`docs/FRONTEND.md` |
-| `miniprogram-dev` 微信小程序 | 点名 | `dev-team-miniprogram` | `miniprogram/`、`docs/FRONTEND.md` |
-| Lead（编排） | 会话本身 | `dev-team-lead` | 汇总：`docs/WORKLOG.md`、`docs/DECISIONS.md` |
+| `miniprogram-dev` 小程序 | 点名 | `dev-team-miniprogram` | `miniprogram/`、`docs/FRONTEND.md` |
 
-按需扩编：`dev_team_start(goal=..., project=..., roles=["dev", "react-dev"])`。要加全新角色，就在 `cordis.patch.yml`
-的 `roles` 里加一条（`skill` / `duties` / `deliverables` / `acceptance` / `docs` / `writeScopes`），再加一份
-`skills/<skill>/SKILL.md`，然后走「移除-安装」。
+**配置放契约，手册放方法**：`roles[].duties/deliverables/acceptance` 是任务契约（进看板与提示词，必须短）；
+做法、代码模式、检查清单在 `skills/dev-team-*/SKILL.md`，成员开工时用 `skill(name="dev-team-dev")` 按需加载。
 
-## 角色手册（skill）
-
-**配置放契约，手册放方法**：`cordis.patch.yml` 里每个角色的 `duties/deliverables/acceptance/writeScopes` 是任务契约
-（进入看板任务与成员提示词，必须短）；**做法、代码模式、检查清单、常见坑**写在 [`skills/dev-team-*/SKILL.md`](skills) 里，
-成员开工时用 `skill(name="dev-team-dev")` 按需加载——不为每个成员付全量手册的 token。
-
-- 手册根目录由 preset 的 `skill-filesystem` 行配置：`customSkillDirs: [/home/eric/programming/ai_dev_team/skills]`；
-  项目自己的 `<项目根>/.dsh/skills` 仍然有效（默认根保留），项目专属 skill 可以照常放。
-- **改手册正文不用重装**：`dsh-skill-filesystem` 会监视根目录，下一次会话/目录刷新即生效。
-- **改 skill 名字、加新手册目录、改根路径要重装**（配置在 preset 里）。
-- 每个成员的任务提示词都会带一行 `开工前先加载你的角色手册：skill(name="...")`；蓝图里也列出各角色的手册名。
-- 手册与配置冲突时以**任务描述与 `docs/` 契约**为准（手册里也这么写着）。
-
-新增一份手册的最小步骤：建 `skills/dev-team-<role>/SKILL.md`（frontmatter 必须有 `name` 与 `description`，
-建议写 `whenToUse`），在 `roles` 里加 `skill: dev-team-<role>`，`node --test test/` 会校验两者一致。
-
-## 配置即数据
-
-`cordis.patch.yml` 里 `dev-team` 行的 `config` 是唯一真源，改这里而不是改 prompt：
+## 配置即数据（`cordis.patch.yml` 的 `dev-team` 行）
 
 | 字段 | 含义 |
 |---|---|
-| `teamName` | 团队名 |
-| `context` / `freshProvider` / `forkProvider` | 成员上下文（`fresh` 推荐）与创建提供方 |
-| `stackSummary` / `stackRules` | 一句话技术栈 + 逐条工程约定（async、事务、迁移、Redis、pyjoist 组件规范） |
-| `commands` | 常用命令（默认 uv + pytest + ruff + alembic + uvicorn） |
-| `projectDocs` | 每个项目必须有的 md 清单：`path` / `title` / `purpose` / `owner` |
-| `templatesDir` | 文档骨架目录，默认 `templates/project` |
-| `workflow` | 八阶段工作流（立项 → 契约 → 拆分 → 实现 → 验证 → 评审 → 验收 → 收尾） |
-| `rules` | 团队硬约束（文档必落盘、先契约后实现、写入范围、交付带验证……） |
-| `roles[]` | 角色表：`name` / `title` / `description` / `phase` / **`skill`** / `duties` / `deliverables` / `acceptance` / `docs` / `writeScopes` / `create` |
+| `teamName` / `context` / `freshProvider` / `forkProvider` | 团队名与成员上下文（`fresh` 推荐） |
+| `stackSummary` / `stackRules` / `commands` | 技术栈、逐条工程约定（async/事务/迁移/Redis/pyjoist）、常用命令（uv + pytest + ruff + alembic + uvicorn） |
+| `riskTiers[]` | 风险等级：`id` / `title` / `when` / `roles` / `gates` / `solo` / `default` |
+| `pipeline[]` | 流水线阶段：`id` / `title` / `owner` / `dependsOn` / `tiers` / `deliverables` |
+| `projectDocs[]` | 每个项目必须有的 md：`path` / `title` / `purpose` / `owner`（12 份） |
+| `templatesDir` / `operatingModel` | 文档骨架目录、运营模型路径（写进蓝图） |
+| `workflow` / `rules` | 车道说明与团队硬约束（定级、契约变更、证据、WIP、回滚、单一写入者） |
+| `roles[]` | 角色契约：`name` / `title` / `description` / `phase` / `skill` / `duties` / `deliverables` / `acceptance` / `docs` / `writeScopes` / `create` |
 
-另外 `skill-filesystem` 插件行的 `config.customSkillDirs` 决定角色手册从哪个目录发现。
+另：`skill-filesystem` 行的 `customSkillDirs` 决定角色手册发现目录（项目自己的 `<项目根>/.dsh/skills` 仍有效）。
 
-配置错误在激活时报出（未知字段、非 kebab-case 角色名、角色名重复、`docs` 引用了未声明的文档、`projectDocs`
-路径重复或写成绝对路径），不会静默跑歪。
+配置错误在**激活时**报出：未知字段、非 kebab-case 名、角色/tier/阶段 id 重复、`docs` 引用未声明文档、
+`projectDocs` 绝对路径或重复、tier 引用未定义角色、多个 `default` tier、非 solo tier 无 roles、阶段 owner 未定义、
+阶段依赖不存在、**循环依赖**、以及某个等级选不到任何阶段。
 
-## 项目文档协议（要点）
+## 项目文档协议（12 份）
 
-每个项目根目录必须有这 10 个文件，各有所有者；重要信息一律落 md，对话里的结论不算记录：
+`AGENTS.md`（lead）｜`docs/PROJECT.md`（pm）｜`docs/ARCHITECTURE.md`（architect）｜`docs/API.md`、`docs/DATA.md`（dev）｜
+`docs/DECISIONS.md`（architect/lead 追加）｜`docs/WORKLOG.md`（lead）｜`docs/TESTING.md`（qa）｜`docs/REVIEWS.md`（reviewer）｜
+`docs/SECURITY.md`（security）｜`docs/RUNBOOK.md`（release）｜`docs/FRONTEND.md`（客户端角色）
 
-`AGENTS.md`（lead）｜`docs/PROJECT.md`（pm）｜`docs/ARCHITECTURE.md`、`docs/API.md`、`docs/DATA.md`（dev）｜
-`docs/DECISIONS.md`、`docs/WORKLOG.md`（lead）｜`docs/TESTING.md`（qa）｜`docs/REVIEWS.md`（reviewer）｜
-`docs/FRONTEND.md`（react-dev / miniprogram-dev）
-
-规则、更新时机与反模式见 [`docs/DOCS.md`](docs/DOCS.md)；骨架就是 [`templates/project/`](templates/project)。
+规则、更新时机与反模式见 [docs/DOCS.md](docs/DOCS.md)；骨架即 [templates/project/](templates/project)。
 
 ## 验证状态
 
-已验证：
-
 | 项 | 证据 |
 |---|---|
-| 插件代码行为 | `node --test test/` 9 个用例全过：配置校验（含非法 `skill` 名）、蓝图渲染、**手册一致性（配置↔磁盘↔提示词）**、**真写盘脚手架（10 个文件、幂等、不覆盖）**、路径越界拒绝、`project` 前缀范围、角色提示词内容、Lead 权限、重名与单点失败 |
-| 模板完整性 | `templates/project/**` 与 `projectDocs` 一一对应（10/10），测试断言无 `missingTemplates` |
-| 手册完整性 | 7 份 `skills/dev-team-*/SKILL.md`：frontmatter 的 `name` 与目录名一致、`description`/`whenToUse` 非空、正文有实际内容，且每个角色的提示词都带 `skill(name="...")` |
-| 安装与激活 | `install_bundle` → `application: applied`；`Config.listConfigs` 有 `include:preset-devteam`；`list_plugins` 显示 `enabled: true, fiberPhase: "active"`（preset registry 会先审计子行的导入/激活/泄漏，失败即抛错） |
+| 插件行为 | `node --test test/` **11/11 通过**：蓝图内容、配置校验（含 tier/pipeline 全部错误分支与循环依赖）、**手册↔配置↔提示词一致性**、**12 份文档真写盘（幂等/不覆盖/越界拒绝）**、T1/T2/T3 三条车道的 DAG 与 blockedBy 精确断言、点名角色连带阶段、T0 拒绝建队、权限与参数校验、重名跳过与单点失败隔离 |
+| 模板完整性 | `templates/project/**` 与 `projectDocs` 一一对应（12/12），测试断言无 `missingTemplates` |
+| 手册完整性 | 10 份 `skills/dev-team-*/SKILL.md`：frontmatter 用真实 YAML 解析、目录名与 `name` 一致、`description`/`whenToUse` 非空、正文有实际内容 |
+| 安装与激活 | `install_bundle` → `application: applied`；`Config.listConfigs` 有 `include:preset-devteam`；`list_plugins` 显示 `enabled: true, fiberPhase: "active"`（preset registry 先审计子行导入/激活/泄漏，失败即抛错） |
 
-未验证（需要真实会话，本会话无法代做）：用 `devteam` 预设新开会话后模型侧的蓝图与工具可见性、真跑一次建队。
-
-验收方式：新开会话选 **开发团队** → 发一个开发需求（附项目根目录）→ 预期看到一次 `dev_docs_init` 或
-`dev_team_start`、看板出现 pm/dev/qa 三条任务、成员列表出现三个 teammate、项目里出现 10 个 md 文件。
+**未验证**（需要真实会话，本会话无法代做）：新会话里模型的蓝图可见性、`dev_team_start` 真建 DAG 与成员、
+看板依赖与 ready 状态在界面上的呈现。验收：新开会话选 **开发团队** → 发需求并给项目根 → 预期看到一次
+`dev_team_start`、看板出现该等级的阶段任务链（含依赖）、成员名单与等级一致、项目里出现 12 份 md。
 
 ## 限制
 
-- teammate 与 Lead **同模型**；成员继承 Lead 的 preset，角色差异只来自各自任务提示词。
-- 共享工作目录，**没有 worktree 隔离、没有文件锁**；`writeScopes` 是约定，范围重叠只会在看板警告。
-- 文档脚手架只创建缺失文件（不覆盖），也只在工作目录或用户主目录内创建。
-- 团队上限 8 人；成员名永久保留，同一会话不能重建同名成员。
-- 服务端 UI 组件规范依赖 pyjoist 本机包 `/home/eric/programming/joist`（`import joist`）；要改 pyjoist 本身请去那个仓库，别在业务项目里改。
+- teammate 与 Lead **同模型**；成员继承 Lead 的 preset，角色差异只来自任务与角色手册。
+- 共享工作目录，**无 worktree、无文件锁**：`writeScopes` 是约定，重叠只在看板警告，靠 Lead 裁决。
+- 文档脚手架只创建缺失文件，且只在工作目录或用户主目录内创建。
+- 团队上限 8 人（T3 用 7 人）；成员名永久保留，同一会话不能重建同名成员。
+- pyjoist 是本机包 `/home/eric/programming/joist`（`import joist`）；要改它请去那个仓库另开任务。

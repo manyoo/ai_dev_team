@@ -1,6 +1,6 @@
 # 项目文档协议
 
-> 每个项目都必须有一份持续更新的 md 记录。这份文件定义**有哪些文件、谁维护、什么时候更新、怎么写**。
+> 每个项目都必须有一份持续更新的 md 记录（共 12 份）。这份文件定义**有哪些文件、谁维护、什么时候更新、怎么写**。
 > 机器可读的清单在 [`cordis.patch.yml`](../cordis.patch.yml) 的 `projectDocs`；骨架模板在 [`templates/project/`](../templates/project)。
 
 ## 1. 为什么强制
@@ -15,13 +15,15 @@
 |---|---|---|---|
 | `AGENTS.md` | lead | 给所有 agent 的常驻约束（技术栈、命令、目录、pyjoist 规范、文档入口） | 技术栈/命令/目录约定变化时 |
 | `docs/PROJECT.md` | pm | 目标、范围、**非目标**、用户场景、术语、验收标准 | 需求或范围变化时 |
-| `docs/ARCHITECTURE.md` | dev | 模块边界、目录、请求链路、外部依赖、运行与部署 | 结构或依赖变化时 |
+| `docs/ARCHITECTURE.md` | architect | 模块边界、依赖方向、请求链路、外部依赖、NFR、运行与部署 | 结构或依赖方向变化时（结构变更属 T3） |
 | `docs/API.md` | dev | 路由契约（方法/路径/请求/响应/错误码/鉴权）、HTMX 片段约定、前端使用清单 | **先改这里再写实现** |
 | `docs/DATA.md` | dev | 表结构与索引、Alembic 迁移历史、Redis key 空间与 TTL | schema / key 变化时，与迁移同步 |
 | `docs/DECISIONS.md` | lead | 决策记录（背景/决策/被否方案/影响/回滚）**追加式** | 每次技术与产品决策 |
 | `docs/WORKLOG.md` | lead | 每轮进展与交接（做了什么/怎么验证/下一步/阻塞）**追加式** | 每轮工作结束 |
 | `docs/TESTING.md` | qa | 测试策略、用例清单、独立验证的命令与结果、已知缺口 | 每次独立验证后 |
 | `docs/REVIEWS.md` | reviewer | 评审记录（文件:行 + 级别 + 建议 + 是否已修）**追加式** | 每次评审 |
+| `docs/SECURITY.md` | security | 威胁面 10 项核对、逐项结论与依据、高危项清零记录 | 涉及鉴权/支付/个人数据/对外接口时（高危未清零不得发布） |
+| `docs/RUNBOOK.md` | release | 发布顺序、迁移 expand/contract、开关、回滚、冒烟、告警、事故复盘 | 上线/迁移/事故后 |
 | `docs/FRONTEND.md` | react-dev / miniprogram-dev | React SPA / 微信小程序工程结构、构建发布、对接方式 | 客户端工程变化时（无客户端可留空） |
 
 ## 3. 怎么生成
@@ -60,6 +62,9 @@ dev_team_start(goal="...", project="myapp")
 | 选了库、定了并发或缓存策略 | `DECISIONS.md` |
 | 跑完一轮验证 | `TESTING.md`（+ 交接到 `WORKLOG.md`） |
 | 评审完一段代码 | `REVIEWS.md` |
+| 定了模块边界/NFR/关键选型 | `ARCHITECTURE.md` + `DECISIONS.md` |
+| 改了鉴权/支付/个人数据/对外接口 | `SECURITY.md` |
+| 要上线、要迁移、出了事故 | `RUNBOOK.md` |
 | 一轮工作收尾 | `WORKLOG.md` |
 | 客户端工程或对接方式变了 | `FRONTEND.md` |
 | 技术栈、命令、目录约定变了 | `AGENTS.md` |
