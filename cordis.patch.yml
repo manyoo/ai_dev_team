@@ -6,10 +6,13 @@
 #   2. `@local/dsh-ai-dev-team`（本包自己的 host 半），把下方的 roles / stack / workflow /
 #      projectDocs 渲染成常驻蓝图，并提供 `dev_team_start`、`dev_docs_init` 两个工具。
 #
-# 安装 / 更新（在 DSH 会话里）：
-#   plugin_manager  action: install_bundle   target: /home/eric/programming/ai_dev_team
+# 安装 / 更新（在 DSH 会话里）—— 本 patch 不写死任何绝对路径，从哪装都能用：
+#   plugin_manager  action: install_bundle   target: github:manyoo/ai_dev_team   # 从 GitHub 装
+#   plugin_manager  action: install_bundle   target: /path/to/ai_dev_team        # 或本机目录（开发用）
 #   # 更新：先 remove_bundle(@local/dsh-ai-dev-team) 再 install_bundle
 #
+# 路径解析：skills 目录由下面的 `!!js` 表达式按 baseUrl 定位本包（安装位置无关）；
+# operatingModel / templatesDir 是包内相对路径，由 lib/plugin.js 按包根解析。
 # ⚠️ 改完本文件要走「移除-安装」两步才生效（preset 在启动时激活一次）。
 # ⚠️ 本模式用 Agent Teams：profile 需已启用 `@deepseek-ai/dsh-experimental-agent-team-profile`。
 # ⚠️ 项目 md 文档骨架在 templates/project/**，由 dev_docs_init / dev_team_start 复制到项目里。
@@ -64,9 +67,29 @@
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
             config:
-              # 团队角色手册：每个角色一份 SKILL.md；目录被监视，改正文不需要重装
+              # 团队角色手册：每个角色一份 SKILL.md；目录被监视，改正文不需要重装。
+              # 用 !!js 按 baseUrl 找到「本包装在哪」再拼 skills/，所以 link: 安装（本机目录）
+              # 与 git 安装（GitHub 拉进 profile）都能解析；与内置 cordis 预设同一套写法。
+              # 表达式保持单行可折叠（不写 // 注释、不依赖 ASI），dump/编辑器回写后语义不变。
               customSkillDirs:
-                - /home/eric/programming/ai_dev_team/skills
+                - !!js |-
+                  (() => {
+                    const fs = process.getBuiltinModule('node:fs');
+                    const path = process.getBuiltinModule('node:path');
+                    const url = process.getBuiltinModule('node:url');
+                    const { createRequire } = process.getBuiltinModule('node:module');
+                    const raw = String(baseUrl);
+                    const anchor = raw.includes('://') ? url.fileURLToPath(raw) : raw;
+                    const dirs = [];
+                    try {
+                      dirs.push(path.dirname(createRequire(anchor).resolve('@local/dsh-ai-dev-team/package.json')));
+                    } catch {}
+                    dirs.push(anchor, path.dirname(anchor));
+                    for (const dir of dirs) {
+                      if (fs.existsSync(path.join(dir, 'skills'))) return path.join(dir, 'skills');
+                    }
+                    return path.join(path.dirname(anchor), 'skills');
+                  })()
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
           - id: command-goal
@@ -142,7 +165,8 @@
               # 项目文档骨架模板目录（相对本 bundle 根）
               templatesDir: templates/project
               # 完整运营模型（流水线/质量门/交接协议/证据等级/WIP/度量/事故通道）
-              operatingModel: /home/eric/programming/ai_dev_team/docs/OPERATING-MODEL.md
+              # 包内相对路径，由 lib/plugin.js 按包根解析成绝对路径写进蓝图（安装位置无关）
+              operatingModel: docs/OPERATING-MODEL.md
               # 团队人数上限。必须与 @deepseek-ai/dsh-experimental-agent-team-profile
               # 里 agent-team 行的 maxMembers 一致（测试会比对，防两边漂移）。
               maxMembers: 8

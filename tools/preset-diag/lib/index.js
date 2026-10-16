@@ -1,11 +1,16 @@
 import { writeFileSync } from "node:fs";
+import { dirname, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const name = "preset-diag";
 export const inject = ["agentPresets"];
 
+/** Package root; a relative `out` resolves here, so the bundle works from any install location. */
+const BUNDLE_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
+
 /** Dump the live preset roster (with broken reasons) and the composition inventory. */
 export async function apply(ctx, config) {
-  const out = config.out;
+  const out = config.out === undefined || isAbsolute(config.out) ? config.out : resolve(BUNDLE_DIR, config.out);
   const run = async (label) => {
     try {
       const list = await ctx.agentPresets.list();

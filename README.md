@@ -24,20 +24,33 @@
 ├── docs/TEAM.md                # 角色、RACI、交接、质量门总览
 ├── docs/DOCS.md                # 项目文档协议
 ├── tools/preset-diag/          # 排障：把预设名册（含 broken 原因）导出到 report.json
-└── test/dev-team.test.mjs      # 集成测试 ×17（含真写盘脚手架、DAG 规划、容量边界与蓝图字面量模板回归）
+└── test/dev-team.test.mjs      # 集成测试 ×21（真写盘脚手架、DAG 规划、容量边界、蓝图字面量模板回归、GitHub 安装可用性）
 ```
 
 ## 安装 / 更新
 
+**从 GitHub 装（推荐，任何机器都能装）**：
+
 ```python
-# 安装
-plugin_manager  action: install_bundle  target: /home/eric/programming/ai_dev_team
+plugin_manager  action: install_bundle  target: github:manyoo/ai_dev_team
+# 想钉住某个提交/标签：target: github:manyoo/ai_dev_team#<tag 或 commit>
+```
+
+**从本机目录装（改代码的开发流程）**：
+
+```python
+plugin_manager  action: install_bundle  target: /path/to/ai_dev_team
 
 # 更新（改了 cordis.patch.yml / lib / templates 之后）
 plugin_manager  action: remove_bundle   target: @local/dsh-ai-dev-team
-plugin_manager  action: install_bundle  target: /home/eric/programming/ai_dev_team
+plugin_manager  action: install_bundle  target: <上面任一种 target>
 ```
 
+- 仓库是**私有**的：git 安装走你本机的 git 凭据（`git credential` / `gh auth`），DSH 那边不会另存一份。
+- patch 里**不写任何绝对路径**，所以两种装法共用一份 `cordis.patch.yml`：
+  - `skills` 目录用 `!!js` 表达式按 `baseUrl` 定位本包（与内置 cordis 预设同一套写法）；
+  - `operatingModel` / `templatesDir` 是包内相对路径，由 `lib/plugin.js` 按包根解析成绝对路径。
+  从 GitHub 装完，角色手册、项目 md 骨架、运营模型都自动指向安装位置里的那份，不需要手改配置。
 - 对已安装 bundle 重复 `install_bundle` 返回 `ambiguous-install`（幂等提示，状态不变）；要带上改动必须走「移除-安装」。
 - 改 **skill 正文**不用重装（目录被监视）；改 **skill 名字、手册目录、根路径、preset 配置**要重装。
 - 已有会话保留启动时的 preset 版本；验证改动要开新会话。
@@ -57,7 +70,7 @@ plugin_manager  action: install_bundle  target: /home/eric/programming/ai_dev_te
 
 ### 排障：模式显示「加载失败」
 
-1. `plugin_manager install_bundle target=/home/eric/programming/ai_dev_team/tools/preset-diag`
+1. `plugin_manager install_bundle target=<ai_dev_team 目录>/tools/preset-diag`
 2. 等约 10 秒，读 `tools/preset-diag/report.json`：每个预设的 `broken` 字段就是 UI 上显示的失败原因
    （名册与组合清单两份）
 3. 用完 `plugin_manager remove_bundle target=@local/dsh-preset-diag`，并删掉 `report.json`
@@ -183,11 +196,13 @@ agentdesign(agent-dev) → agentimpl(agent-dev) → agenteval(qa) ⇢ verify(qa)
 
 | 项 | 证据 |
 |---|---|
-| 插件行为 | `node --test test/` **17/17 通过**：蓝图内容、配置校验（含 tier/pipeline 全部错误分支与循环依赖）、**手册↔配置↔提示词一致性**、**13 份文档真写盘（幂等/不覆盖/越界拒绝）**、T1/T2/T3 三条车道的 DAG 与 blockedBy 精确断言、点名角色连带阶段与**软依赖（评测不产生幻影阻塞）**、T0 拒绝建队、权限与参数校验、重名跳过与单点失败隔离 |
+| 插件行为 | `node --test test/` **21/21 通过**：蓝图内容、配置校验（含 tier/pipeline 全部错误分支与循环依赖）、**手册↔配置↔提示词一致性**、**13 份文档真写盘（幂等/不覆盖/越界拒绝）**、T1/T2/T3 三条车道的 DAG 与 blockedBy 精确断言、点名角色连带阶段与**软依赖（评测不产生幻影阻塞）**、T0 拒绝建队、权限与参数校验、重名跳过与单点失败隔离 |
 | 蓝图不被变量插值 | 回归用例用真实 `dsh-system-prompt` 的 `renderPrompt` 跑装配：去掉 `interpolate: false` 就复现 `malformed prompt variable reference "{{ child }}"`，留着则整段原样保留 |
 | 模板完整性 | `templates/project/**` 与 `projectDocs` 一一对应（12/12），测试断言无 `missingTemplates` |
 | 手册完整性 | 11 份 `skills/dev-team-*/SKILL.md`：frontmatter 用真实 YAML 解析、目录名与 `name` 一致、`description`/`whenToUse` 非空、正文有实际内容 |
 | 安装与激活 | `install_bundle` → `application: applied`；`Config.listConfigs` 有 `include:preset-devteam`；`list_plugins` 显示 `enabled: true, fiberPhase: "active"`（preset registry 先审计子行导入/激活/泄漏，失败即抛错） |
+| GitHub 安装可用性 | 测试用 DSH 真实的 patch 方言（`js-yaml JSON_SCHEMA + !!js` 标量标签）与真实的表达式求值方式（`with (ctx) { return eval(expr) }`）跑 `customSkillDirs`：`baseUrl` 指向仓库目录（link: 安装）与指向 profile 目录（git/pnpm 安装）都解析到包内 `skills/`（11 份手册）；dump 回写后语义不变；patch 里无任何机器绝对路径 |
+| 真实 GitHub 安装 | `pnpm add github:manyoo/ai_dev_team` 装进临时目录 → 用安装副本里的 patch 求值到安装位置的 `skills/`，并用该副本的 `lib/plugin.js` 跑真实提示词装配 |
 
 **未验证**（需要真实会话，本会话无法代做）：新会话里模型的蓝图可见性、`dev_team_start` 真建 DAG 与成员、
 看板依赖与 ready 状态在界面上的呈现。验收：新开会话选 **开发团队** → 发需求并给项目根 → 预期看到一次
@@ -199,6 +214,9 @@ agentdesign(agent-dev) → agentimpl(agent-dev) → agenteval(qa) ⇢ verify(qa)
 
 - 需要 **DSH ≥ 0.2.0-rc.1**：蓝图靠 `interpolate: false` 关闭段落插值，更早的 `dsh-system-prompt` 无条件插值
   （本机 npx 缓存里就有 0.1.5-rc.3，它会让 `{{ child }}` 重新变成报错源）。
+- 需要 **DSH 的 patch 方言支持 `!!js` 标量**（内置 `standard`/`cordis` 预设都用到，0.2.0-rc.2 实测可用）：
+  `skills` 目录靠它定位安装位置；不支持的旧版本会退化成「手册目录缺失」，不会静默跑歪。
+- 仓库是私有的：从 GitHub 安装依赖本机 git 凭据；`github:manyoo/ai_dev_team#<tag>` 可钉版本。
 - teammate 与 Lead **同模型**；成员继承 Lead 的 preset，角色差异只来自任务与角色手册。
 - 共享工作目录，**无 worktree、无文件锁**：`writeScopes` 是约定，重叠只在看板警告，靠 Lead 裁决。
 - 文档脚手架只创建缺失文件，且只在工作目录或用户主目录内创建。

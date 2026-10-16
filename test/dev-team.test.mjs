@@ -9,18 +9,65 @@
  * 真实的 preset 激活与模型可见性只能在会话里验证，见 README「验证状态」。
  */
 import assert from "node:assert/strict";
-import { existsSync, globSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, globSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 import { apply } from "../lib/plugin.js";
 
 const require = createRequire(import.meta.url);
-const yaml = require("/home/eric/.dsh/profiles/web/node_modules/yaml");
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const TMP = join(ROOT, "tmp");
+
+/** Locate a YAML parser: the repo's own install, a local DSH profile, or the DSH installation. */
+function findYamlModule() {
+  for (const dir of [ROOT, join(homedir(), ".dsh", "profiles", "web"), join(homedir(), ".dsh", "profiles")]) {
+    try {
+      return require.resolve("yaml", { paths: [dir] });
+    } catch {
+      // 换下一个候选
+    }
+  }
+  if (typeof globSync === "function") {
+    const patterns = [`${homedir()}/.npm/_npx/*/node_modules/yaml/package.json`, `${homedir()}/.dsh/profiles/*/node_modules/yaml/package.json`];
+    for (const pattern of patterns) {
+      try {
+        const hits = globSync(pattern);
+        if (hits.length > 0) return hits[0];
+      } catch {
+        // 忽略不可读的候选路径
+      }
+    }
+  }
+  return null;
+}
+
+/** Locate js-yaml — the parser DSH itself uses for patch files; null when this box has none. */
+function findJsYamlModule() {
+  for (const dir of [ROOT, join(homedir(), ".dsh", "profiles", "web")]) {
+    try {
+      return require.resolve("js-yaml", { paths: [dir] });
+    } catch {
+      // 换下一个候选
+    }
+  }
+  if (typeof globSync === "function") {
+    try {
+      const hits = globSync(`${homedir()}/.npm/_npx/*/node_modules/js-yaml/package.json`);
+      if (hits.length > 0) return hits[0];
+    } catch {
+      // 忽略不可读的候选路径
+    }
+  }
+  return null;
+}
+
+const yamlPath = findYamlModule();
+if (yamlPath === null) throw new Error("测试需要 YAML 解析器：在仓库里 npm i yaml，或在本机 DSH profile / npx 安装下运行");
+const yaml = require(yamlPath);
+const jsYamlPath = findJsYamlModule();
 
 /** Parsed preset declaration from the shipped patch. */
 function realPatch() {
@@ -65,10 +112,10 @@ function harness(agentTeams) {
   return { ctx, sections, tools };
 }
 
-/** Apply the real config and return the registered blueprint + tools by name. */
-function install(agentTeams) {
+/** Apply a config (the real one by default) and return the registered blueprint + tools by name. */
+function install(agentTeams, config = realConfig()) {
   const h = harness(agentTeams);
-  apply(h.ctx, realConfig());
+  apply(h.ctx, config);
   const byName = new Map(h.tools.map((tool) => [tool.name, tool]));
   return { ...h, start: byName.get("dev_team_start"), docs: byName.get("dev_docs_init") };
 }
@@ -155,6 +202,109 @@ test("蓝图：角色、手册、风险等级、流水线、文档协议、命�
   assert.equal(docs.name, "dev_docs_init");
   assert.deepEqual(start.parameters.required, ["goal"]);
   assert.deepEqual(Object.keys(start.parameters.properties), ["goal", "project", "risk", "roles"]);
+});
+
+/** js-yaml plus the exact `!!js` scalar tag DSH registers for patch files; null when unavailable. */
+function dshPatchDialect() {
+  if (jsYamlPath === null) return null;
+  const jsYaml = require(jsYamlPath);
+  const isExpression = (value) => value instanceof Object && "__jsExpr" in value;
+  const JsExpr = new jsYaml.Type("tag:yaml.org,2002:js", {
+    kind: "scalar",
+    resolve: (data) => typeof data === "string",
+    construct: (data) => ({ __jsExpr: data }),
+    predicate: isExpression,
+    represent: (data) => data.__jsExpr,
+  });
+  return { jsYaml, isExpression, schema: jsYaml.JSON_SCHEMA.extend(JsExpr) };
+}
+
+/** Evaluate a `!!js` patch scalar exactly the way cordis-plugin-loader does. */
+const evaluateLoaderExpression = new Function("ctx", "expr", "with (ctx) { return eval(expr) }");
+
+/** The skill-filesystem row's `!!js` expression, parsed with the DSH patch dialect. */
+function skillDirExpression(dialect, patch) {
+  const parsed = patch ?? dialect.jsYaml.load(readFileSync(join(ROOT, "cordis.patch.yml"), "utf8"), { schema: dialect.schema });
+  const preset = parsed[0].insert.find((row) => row.id === "preset-devteam");
+  const row = preset.config.plugins.find((item) => item.id === "skill-filesystem");
+  const [first] = row.config.customSkillDirs;
+  assert.ok(dialect.isExpression(first), "customSkillDirs 必须是 !!js 表达式（写死路径换个安装位置就失效）");
+  return first.__jsExpr;
+}
+
+test("从 GitHub 安装：团队配置里不写机器绝对路径，安装位置无关", () => {
+  const patch = yaml.parse(readFileSync(join(ROOT, "cordis.patch.yml"), "utf8"));
+  const preset = patch[0].insert[0].config;
+  const devTeam = preset.plugins.find((row) => row.id === "dev-team").config;
+  assert.ok(!isAbsolute(devTeam.operatingModel), `operatingModel 应是包内相对路径：${devTeam.operatingModel}`);
+  assert.ok(!isAbsolute(devTeam.templatesDir), `templatesDir 应是包内相对路径：${devTeam.templatesDir}`);
+  const skillRow = preset.plugins.find((row) => row.id === "skill-filesystem");
+  const skillDir = skillRow.config.customSkillDirs[0];
+  const expression = typeof skillDir === "string" ? skillDir : skillDir?.__jsExpr;
+  assert.ok(typeof expression === "string" && expression.length > 0, "skills 目录必须是 !!js 表达式，而不是写死的路径");
+  // 写死 /home、/Users 或盘符 = 别人的机器装完直接瞎
+  for (const [label, value] of [
+    ["operatingModel", devTeam.operatingModel],
+    ["templatesDir", devTeam.templatesDir],
+    ["customSkillDirs", expression],
+  ]) {
+    assert.ok(!/(^|[\s'"()])(\/home\/|\/Users\/|[A-Za-z]:\\)/.test(value), `${label} 不应含机器绝对路径`);
+  }
+});
+
+test(
+  "从 GitHub 安装：!!js 技能目录表达式在 link: 与 profile（git/pnpm）两种形态下都解析到包内 skills/",
+  { skip: dshPatchDialect() === null ? "本机未找到 js-yaml" : false },
+  () => {
+    const dialect = dshPatchDialect();
+    const expression = skillDirExpression(dialect);
+
+    // A. link: 安装：baseUrl 是 bundle 目录（本仓库）
+    const linked = evaluateLoaderExpression({ baseUrl: pathToFileURL(join(ROOT, "cordis.patch.yml")).href }, expression);
+    assert.equal(linked, join(ROOT, "skills"), "baseUrl 指向 bundle 目录时应解析到包内 skills/");
+
+    // B. git 安装：包落在 <profile>/node_modules/@local/dsh-ai-dev-team，baseUrl 是 profile 目录
+    const profileDir = join(TMP, "install-shape");
+    const installedAt = join(profileDir, "node_modules", "@local", "dsh-ai-dev-team");
+    mkdirSync(dirname(installedAt), { recursive: true });
+    symlinkSync(ROOT, installedAt, process.platform === "win32" ? "junction" : "dir");
+    const installed = evaluateLoaderExpression({ baseUrl: pathToFileURL(join(profileDir, "cordis.yml")).href }, expression);
+    assert.equal(installed, join(ROOT, "skills"), "baseUrl 指向 profile 时应按包名解析到安装位置");
+
+    // 解析出来的目录里真的有角色手册
+    const manuals = readdirSync(installed, { withFileTypes: true }).filter(
+      (entry) => entry.isDirectory() && existsSync(join(installed, entry.name, "SKILL.md")),
+    );
+    assert.equal(manuals.length, 11, "skills/ 里应有 11 份角色手册");
+  },
+);
+
+test(
+  "从 GitHub 安装：!!js 表达式经 DSH 方言 dump 回写后语义不变（--dump-config / 配置编辑器安全）",
+  { skip: dshPatchDialect() === null ? "本机未找到 js-yaml" : false },
+  () => {
+    const dialect = dshPatchDialect();
+    const patch = dialect.jsYaml.load(readFileSync(join(ROOT, "cordis.patch.yml"), "utf8"), { schema: dialect.schema });
+    const dumped = dialect.jsYaml.dump(patch, { schema: dialect.schema, lineWidth: -1 });
+    const expression = skillDirExpression(dialect, dialect.jsYaml.load(dumped, { schema: dialect.schema }));
+    const ctx = { baseUrl: pathToFileURL(join(ROOT, "cordis.patch.yml")).href };
+    assert.equal(evaluateLoaderExpression(ctx, expression), join(ROOT, "skills"), "回写后的表达式必须解析到同一个目录");
+  },
+);
+
+test("从 GitHub 安装：operatingModel 按包根解析成存在的绝对路径，绝对路径与空值都照旧", () => {
+  const model = join(ROOT, "docs", "OPERATING-MODEL.md");
+  assert.ok(existsSync(model), "运营模型文件必须随包提交");
+  const { sections } = install(teamStub());
+  assert.ok(sections[0].text.includes(model), `蓝图应写出解析后的绝对路径：${model}`);
+  assert.ok(sections[0].text.includes("完整运营模型"));
+
+  const custom = join(TMP, "custom-model.md");
+  assert.ok(install(teamStub(), { ...realConfig(), operatingModel: custom }).sections[0].text.includes(custom), "绝对路径应原样保留");
+  assert.ok(
+    !install(teamStub(), { ...realConfig(), operatingModel: "" }).sections[0].text.includes("完整运营模型"),
+    "空值应关闭运营模型段落",
+  );
 });
 
 /** Locate the newest installed dsh-system-prompt that honors `interpolate: false`; null when none. */
@@ -287,7 +437,12 @@ test("配置错误在激活时报出，而不是静默跑歪", () => {
 
 test("角色手册（skill）：配置、磁盘文件与提示词三者一致", async () => {
   const config = realConfig();
-  const skillsDir = realPatch().plugins.find((plugin) => plugin.id === "skill-filesystem").config.customSkillDirs[0];
+  // 手册目录由 patch 里的 !!js 表达式给出：按 DSH 的求值方式解析（换个安装位置也对）
+  const declared = realPatch().plugins.find((plugin) => plugin.id === "skill-filesystem").config.customSkillDirs[0];
+  const skillsDir = evaluateLoaderExpression(
+    { baseUrl: pathToFileURL(join(ROOT, "cordis.patch.yml")).href },
+    typeof declared === "string" ? declared : declared.__jsExpr,
+  );
   assert.equal(skillsDir, join(ROOT, "skills"));
   assert.ok(existsSync(skillsDir), "skills 目录必须存在");
 
