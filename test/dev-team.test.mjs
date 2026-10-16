@@ -13,7 +13,7 @@ import { existsSync, globSync, mkdirSync, readdirSync, readFileSync, rmSync, wri
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 import { apply } from "../lib/plugin.js";
 
@@ -126,6 +126,7 @@ test("蓝图：角色、手册、风险等级、流水线、文档协议、命�
   assert.equal(sections.length, 1);
   assert.equal(sections[0].name, "dev-team:blueprint");
   assert.equal(sections[0].order, 601, "蓝图应排在 Team 策略（600）之后");
+  assert.equal(sections[0].interpolate, false, "蓝图是配置里的文档正文，必须关闭提示词变量插值");
   const text = sections[0].text;
   for (const needle of [
     "pm（产品经理）",
@@ -155,6 +156,69 @@ test("蓝图：角色、手册、风险等级、流水线、文档协议、命�
   assert.deepEqual(start.parameters.required, ["goal"]);
   assert.deepEqual(Object.keys(start.parameters.properties), ["goal", "project", "risk", "roles"]);
 });
+
+/** Locate the newest installed dsh-system-prompt that honors `interpolate: false`; null when none. */
+function findSystemPromptModule() {
+  if (typeof globSync !== "function") return null;
+  const patterns = [
+    `${homedir()}/.npm/_npx/*/node_modules/@deepseek-ai/dsh-system-prompt`,
+    `${homedir()}/.dsh/profiles/*/node_modules/@deepseek-ai/dsh-system-prompt`,
+  ];
+  const found = [];
+  for (const pattern of patterns) {
+    try {
+      for (const dir of globSync(pattern)) {
+        const entry = join(dir, "lib/index.js");
+        const manifest = join(dir, "package.json");
+        if (!existsSync(entry) || !existsSync(manifest)) continue;
+        // 0.2.0-rc.1 之前的版本无条件插值，不认识 interpolate:false，测不出这个缺陷。
+        if (!readFileSync(entry, "utf8").includes("section.interpolate === false")) continue;
+        found.push({ entry, version: JSON.parse(readFileSync(manifest, "utf8")).version ?? "0" });
+      }
+    } catch {
+      // 忽略不可读的候选路径
+    }
+  }
+  found.sort((a, b) => compareVersions(b.version, a.version));
+  return found.length > 0 ? found[0].entry : null;
+}
+
+/** Compare dotted version strings numerically, then their suffixes as text. */
+function compareVersions(a, b) {
+  const left = String(a).split(".");
+  const right = String(b).split(".");
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const numeric = (Number.parseInt(left[i] ?? "0", 10) || 0) - (Number.parseInt(right[i] ?? "0", 10) || 0);
+    if (numeric !== 0) return numeric;
+    const text = String(left[i] ?? "").localeCompare(String(right[i] ?? ""));
+    if (text !== 0) return text;
+  }
+  return 0;
+}
+
+const systemPromptModule = findSystemPromptModule();
+
+test(
+  "回归：蓝图里的 {{ child }} 模板示例不会被当成提示词变量（装配不抛错）",
+  { skip: systemPromptModule === null ? "本机未找到支持 interpolate:false 的 dsh-system-prompt" : false },
+  async () => {
+    // 用真实的提示词装配函数（不是本地仿写）跑一遍，才能复现用户看到的报错形态。
+    const { renderPrompt } = await import(pathToFileURL(systemPromptModule).href);
+    const { sections } = install(teamStub());
+    const blueprintSection = sections[0];
+    assert.equal(blueprintSection.name, "dev-team:blueprint");
+    assert.ok(blueprintSection.text.includes("{{ child }}"), "回归用例依赖真实配置里的 Jinja 模板示例（stackRules）");
+
+    // 打开插值就会复现用户报的错——证明这条用例真的守得住这个缺陷。
+    assert.throws(
+      () => renderPrompt({ sections: [{ ...blueprintSection, interpolate: undefined }], variables: {} }),
+      /malformed prompt variable reference .*in section "dev-team:blueprint"/,
+    );
+    // 关掉插值后整段原样保留，模板示例照常出现在模型提示词里。
+    const rendered = renderPrompt({ sections, variables: {} });
+    assert.ok(rendered.includes("{{ child }}"), "模板示例必须原样保留给模型");
+  },
+);
 
 test("配置错误在激活时报出，而不是静默跑歪", () => {
   const base = realConfig();

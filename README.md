@@ -24,7 +24,7 @@
 ├── docs/TEAM.md                # 角色、RACI、交接、质量门总览
 ├── docs/DOCS.md                # 项目文档协议
 ├── tools/preset-diag/          # 排障：把预设名册（含 broken 原因）导出到 report.json
-└── test/dev-team.test.mjs      # 集成测试 ×16（含真写盘脚手架、DAG 规划与容量边界）
+└── test/dev-team.test.mjs      # 集成测试 ×17（含真写盘脚手架、DAG 规划、容量边界与蓝图字面量模板回归）
 ```
 
 ## 安装 / 更新
@@ -61,6 +61,21 @@ plugin_manager  action: install_bundle  target: /home/eric/programming/ai_dev_te
 2. 等约 10 秒，读 `tools/preset-diag/report.json`：每个预设的 `broken` 字段就是 UI 上显示的失败原因
    （名册与组合清单两份）
 3. 用完 `plugin_manager remove_bundle target=@local/dsh-preset-diag`，并删掉 `report.json`
+
+### 排障：会话里报 `malformed prompt variable reference`
+
+症状：模式能选、会话能开，但一发消息就报（段落名固定是 `dev-team:blueprint`）：
+
+```
+malformed prompt variable reference "{{ child }}" in section "dev-team:blueprint"
+  (variable names match /^[a-z][a-z0-9_]*$/)
+```
+
+原因：提示词注册表默认把常驻段落当**模板**做 `{{变量}}` 插值（变量名只允许小写字母/数字/下划线），
+而蓝图正文来自 `cordis.patch.yml` 的团队配置——`stackRules` 里的 pyjoist/Jinja 示例 `{{ child }}` 是文档，
+不是提示词变量。修复：蓝图段落以 `interpolate: false` 注册（见 `lib/plugin.js` 的 `apply()`），
+配置里的模板示例原样进提示词。这条改的是 `lib/*.js`，按上表**必须重启 dsh**；回归用例见
+`test/dev-team.test.mjs`（用真实 `dsh-system-prompt` 的 `renderPrompt` 断言）。
 
 ## 怎么用
 
@@ -149,6 +164,9 @@ agentdesign(agent-dev) → agentimpl(agent-dev) → agenteval(qa) ⇢ verify(qa)
 
 另：`skill-filesystem` 行的 `customSkillDirs` 决定角色手册发现目录（项目自己的 `<项目根>/.dsh/skills` 仍有效）。
 
+蓝图正文按**字面量**注入提示词（`interpolate: false`），所以配置里写 `{{ child }}` 这类模板示例是安全的——
+它们不会被当成提示词变量解析（否则会话每轮装配都会报 `malformed prompt variable reference`）。
+
 配置错误在**激活时**报出：未知字段、非 kebab-case 名、角色/tier/阶段 id 重复、`docs` 引用未声明文档、
 `projectDocs` 绝对路径或重复、tier 引用未定义角色、多个 `default` tier、非 solo tier 无 roles、阶段 owner 未定义、
 阶段依赖不存在、**循环依赖**、以及某个等级选不到任何阶段。
@@ -165,7 +183,8 @@ agentdesign(agent-dev) → agentimpl(agent-dev) → agenteval(qa) ⇢ verify(qa)
 
 | 项 | 证据 |
 |---|---|
-| 插件行为 | `node --test test/` **15/15 通过**：蓝图内容、配置校验（含 tier/pipeline 全部错误分支与循环依赖）、**手册↔配置↔提示词一致性**、**13 份文档真写盘（幂等/不覆盖/越界拒绝）**、T1/T2/T3 三条车道的 DAG 与 blockedBy 精确断言、点名角色连带阶段与**软依赖（评测不产生幻影阻塞）**、T0 拒绝建队、权限与参数校验、重名跳过与单点失败隔离 |
+| 插件行为 | `node --test test/` **17/17 通过**：蓝图内容、配置校验（含 tier/pipeline 全部错误分支与循环依赖）、**手册↔配置↔提示词一致性**、**13 份文档真写盘（幂等/不覆盖/越界拒绝）**、T1/T2/T3 三条车道的 DAG 与 blockedBy 精确断言、点名角色连带阶段与**软依赖（评测不产生幻影阻塞）**、T0 拒绝建队、权限与参数校验、重名跳过与单点失败隔离 |
+| 蓝图不被变量插值 | 回归用例用真实 `dsh-system-prompt` 的 `renderPrompt` 跑装配：去掉 `interpolate: false` 就复现 `malformed prompt variable reference "{{ child }}"`，留着则整段原样保留 |
 | 模板完整性 | `templates/project/**` 与 `projectDocs` 一一对应（12/12），测试断言无 `missingTemplates` |
 | 手册完整性 | 11 份 `skills/dev-team-*/SKILL.md`：frontmatter 用真实 YAML 解析、目录名与 `name` 一致、`description`/`whenToUse` 非空、正文有实际内容 |
 | 安装与激活 | `install_bundle` → `application: applied`；`Config.listConfigs` 有 `include:preset-devteam`；`list_plugins` 显示 `enabled: true, fiberPhase: "active"`（preset registry 先审计子行导入/激活/泄漏，失败即抛错） |
@@ -178,6 +197,8 @@ agentdesign(agent-dev) → agentimpl(agent-dev) → agenteval(qa) ⇢ verify(qa)
 
 ## 限制
 
+- 需要 **DSH ≥ 0.2.0-rc.1**：蓝图靠 `interpolate: false` 关闭段落插值，更早的 `dsh-system-prompt` 无条件插值
+  （本机 npx 缓存里就有 0.1.5-rc.3，它会让 `{{ child }}` 重新变成报错源）。
 - teammate 与 Lead **同模型**；成员继承 Lead 的 preset，角色差异只来自任务与角色手册。
 - 共享工作目录，**无 worktree、无文件锁**：`writeScopes` 是约定，重叠只在看板警告，靠 Lead 裁决。
 - 文档脚手架只创建缺失文件，且只在工作目录或用户主目录内创建。
